@@ -1,0 +1,17 @@
+# 빌드 산출물 - build.ps1 / package.ps1 로 언제든 다시 만들 수 있다.
+# 배포용 설치 파일은 저장소에 넣지 말고 GitHub Releases 에 올린다.
+bin/
+dist/
+
+# 진단용으로 만들었던 렌더링 확인 이미지
+assets/*-check.png
+
+# 이 PC 에만 해당하는 도구 설정 (로컬 경로가 들어 있다)
+.claude/settings.local.json
+
+# 편집기 / OS 부산물
+.vs/
+*.user
+*.suo
+Thumbs.db
+desktop.ini
