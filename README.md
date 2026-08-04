@@ -145,6 +145,11 @@ The interface follows your Windows display language: Korean or English.
   tool for the same dialog; the `Credential Dialog Xaml Host` window class used here
   matches its implementation
 
+### License
+
+[MIT](LICENSE) — free to use, modify, and redistribute, including commercially,
+as long as the copyright notice is kept. Provided as is, without warranty.
+
 ---
 
 ## 한국어
@@ -278,3 +283,8 @@ Windows 10 또는 11, .NET Framework 4.x (Windows 기본 포함).
 - [AuthenticatorChooser](https://github.com/Aldaviva/AuthenticatorChooser) — 같은
   대화상자를 다루는 다른 도구. 여기서 쓰는 `Credential Dialog Xaml Host` 창
   클래스명이 그 구현과 일치합니다
+
+### 라이선스
+
+[MIT](LICENSE) — 저작권 표시만 유지하면 상업적 이용을 포함해 자유롭게 사용, 수정,
+재배포할 수 있습니다. 보증은 제공되지 않습니다.
