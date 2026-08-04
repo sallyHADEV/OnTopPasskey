@@ -39,8 +39,8 @@ using System.Threading;
 // 파일 속성에 박히는 값은 실행 중 바꿀 수 없으므로 영어로 둔다.
 [assembly: AssemblyDescription("Keeps the Windows Hello / passkey prompt on top and focused")]
 [assembly: AssemblyProduct("OnTopPasskey")]
-[assembly: AssemblyVersion("1.0.2.0")]
-[assembly: AssemblyFileVersion("1.0.2.0")]
+[assembly: AssemblyVersion("1.0.3.0")]
+[assembly: AssemblyFileVersion("1.0.3.0")]
 
 namespace OnTopPasskey
 {

@@ -32,8 +32,8 @@ using System.Windows.Forms;
 [assembly: AssemblyTitle("OnTopPasskey Setup")]
 [assembly: AssemblyDescription("OnTopPasskey Setup")]
 [assembly: AssemblyProduct("OnTopPasskey")]
-[assembly: AssemblyVersion("1.0.2.0")]
-[assembly: AssemblyFileVersion("1.0.2.0")]
+[assembly: AssemblyVersion("1.0.3.0")]
+[assembly: AssemblyFileVersion("1.0.3.0")]
 
 namespace OnTopPasskeySetup
 {
@@ -67,10 +67,16 @@ namespace OnTopPasskeySetup
     internal static class Program
     {
         public const string AppName = "OnTopPasskey";
-        public const string Version = "1.0.2";
+        public const string Version = "1.0.3";
         public const string TaskName = "OnTopPasskey";
         public const string ExeName = "OnTopPasskey.exe";
         public const string UninstExe = "uninstall.exe";
+
+        /// <summary>
+        /// 로그온 후 실행을 미루는 시간(초). /delay:N 으로 바꿀 수 있고 0 이면 즉시 실행한다.
+        /// 부팅 직후 혼잡한 구간을 피해 다른 프로그램에 자리를 내주기 위한 값이다.
+        /// </summary>
+        public static int LogonDelaySeconds = 45;
 
         [STAThread]
         private static int Main(string[] args)
@@ -83,6 +89,12 @@ namespace OnTopPasskeySetup
                 else if (s == "silent" || s == "s" || s == "quiet") silent = true;
                 else if (s == "fromtemp") fromTemp = true;
                 else if (s.StartsWith("lang:")) L.Apply(s.Substring(5));
+                else if (s.StartsWith("delay:"))
+                {
+                    int d;
+                    if (int.TryParse(s.Substring(6), out d) && d >= 0 && d <= 3600)
+                        LogonDelaySeconds = d;
+                }
             }
 
             // PREVIEW 는 배포본에 들어가지 않는다. 화면 배치를 눈으로 확인하기 위한
@@ -303,6 +315,10 @@ namespace OnTopPasskeySetup
             log(L.T("자동 실행 등록 중 (로그온 시 최고 권한)...",
                     "Registering auto-start (highest privileges at logon)..."));
             RegisterTask(log);
+            if (Program.LogonDelaySeconds > 0)
+                log(L.T("  로그온 후 " + Program.LogonDelaySeconds + "초 뒤에 시작합니다 (부팅 혼잡 회피)",
+                        "  Starts " + Program.LogonDelaySeconds
+                        + "s after logon, to stay out of the boot rush"));
 
             log(L.T("시작 메뉴 바로 가기 생성 중...", "Creating Start menu shortcuts..."));
             CreateShortcuts(log);
@@ -471,6 +487,10 @@ namespace OnTopPasskeySetup
             sb.AppendLine("    <LogonTrigger>");
             sb.AppendLine("      <Enabled>true</Enabled>");
             sb.AppendLine("      <UserId>" + Esc(user) + "</UserId>");
+            // 로그온 직후는 드라이버 초기화와 자동 실행 프로그램이 몰리는 구간이다.
+            // 인증 창은 그 시점에 뜰 일이 없으므로 잠시 물러나 있는 편이 안전하다.
+            if (Program.LogonDelaySeconds > 0)
+                sb.AppendLine("      <Delay>PT" + Program.LogonDelaySeconds + "S</Delay>");
             sb.AppendLine("    </LogonTrigger>");
             sb.AppendLine("  </Triggers>");
             sb.AppendLine("  <Principals>");

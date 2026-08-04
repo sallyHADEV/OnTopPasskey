@@ -35,6 +35,11 @@ own finger — the program only fixes where the window sits and who has focus.
 The app installs to `C:\Program Files\OnTopPasskey` and starts automatically at
 logon — with no UAC prompt after this first one.
 
+It waits **45 seconds after logon** before starting, to stay out of the way while
+drivers and other start-up programs are still settling. Nothing needs it during
+that window. Use `/delay:N` on the installer to change it (`/delay:0` to start
+immediately).
+
 ### Why administrator rights are required
 
 `CredentialUIBroker.exe`, the process that shows the prompt, runs at **integrity
@@ -176,6 +181,10 @@ OnTopPasskey는 그 창이 나타나는 순간을 감지해 곧바로 맨 앞으
 
 `C:\Program Files\OnTopPasskey`에 설치되고 로그온할 때 자동으로 실행됩니다. 처음
 한 번 외에는 UAC 창이 뜨지 않습니다.
+
+로그온 후 **45초를 기다렸다가** 시작합니다. 드라이버와 다른 시작 프로그램이 자리를
+잡는 동안 비켜서 있기 위해서이고, 그 사이에 이 프로그램이 필요한 일은 없습니다.
+설치 시 `/delay:N` 으로 조정할 수 있습니다 (`/delay:0` 이면 즉시 실행).
 
 ### 관리자 권한이 필요한 이유
 
