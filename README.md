@@ -155,6 +155,9 @@ The interface follows your Windows display language: Korean or English.
 [MIT](LICENSE) — free to use, modify, and redistribute, including commercially,
 as long as the copyright notice is kept. Provided as is, without warranty.
 
+Working on the code? See [DEVELOPMENT.md](DEVELOPMENT.md) for build instructions,
+design decisions, and the findings behind them.
+
 ---
 
 ## 한국어
@@ -297,3 +300,6 @@ Windows 10 또는 11, .NET Framework 4.x (Windows 기본 포함).
 
 [MIT](LICENSE) — 저작권 표시만 유지하면 상업적 이용을 포함해 자유롭게 사용, 수정,
 재배포할 수 있습니다. 보증은 제공되지 않습니다.
+
+코드를 다루실 분은 [DEVELOPMENT.md](DEVELOPMENT.md) 를 보세요. 빌드 방법과 설계
+결정, 그 근거가 되는 조사 내용이 정리되어 있습니다.
