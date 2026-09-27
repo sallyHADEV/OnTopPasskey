@@ -23,13 +23,17 @@ if (-not (Test-Path $ico)) {
 $manifest = Join-Path $root 'src\app.manifest'
 if (-not (Test-Path $manifest)) { throw "매니페스트가 없습니다: $manifest" }
 
-# 참조는 최소한만. 런타임에 실제로 로드되는 관리 어셈블리는 mscorlib 뿐이다.
+# 참조는 최소한만. 평상시 로드되는 관리 어셈블리는 mscorlib 뿐이다.
+# Drawing / Forms 는 마우스 도움말 패널을 처음 띄울 때만 로드된다 (src\MouseHelp.cs).
 & $csc /nologo /target:winexe /platform:anycpu /optimize+ /langversion:5 `
   /win32icon:$ico `
   /win32manifest:$manifest `
   /out:$out `
   /reference:System.dll `
-  $src
+  /reference:System.Drawing.dll `
+  /reference:System.Windows.Forms.dll `
+  /resource:"$(Join-Path $root 'assets\mouse-help.png'),mouse-help.png" `
+  $src (Join-Path $root 'src\MouseHelp.cs')
 
 if ($LASTEXITCODE -ne 0) { throw "빌드 실패 (exit $LASTEXITCODE)" }
 Write-Output "빌드 완료: $out"

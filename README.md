@@ -63,6 +63,8 @@ replace that file would gain administrator rights at your next logon.
 | Enabled | Turns the watcher on and off |
 | Logging ▸ | See below |
 | Restart as administrator | Only shown if the app is not already elevated |
+| Show mouse help | Semi-transparent panel labelling each mouse button. Shortcut **Ctrl+Alt+Shift+F12** (meant to be assigned to a mouse button); press again, Esc or click to close |
+| Edit mouse help... | Same picture with an input field in every box. Saved to `%LOCALAPPDATA%\OnTopPasskey\mouse-help.txt` |
 | Self test | Tries the same logic against Character Map so you can see it work |
 | Open settings file / Reload settings | |
 | Exit | |
@@ -210,6 +212,8 @@ OnTopPasskey는 그 창이 나타나는 순간을 감지해 곧바로 맨 앞으
 | 활성화 | 감시 켜기 / 끄기 |
 | 로그 ▸ | 아래 표 참조 |
 | 관리자 권한으로 다시 실행 | 이미 상승 상태면 표시되지 않습니다 |
+| 마우스 도움말 보기 | 마우스 버튼별 설명을 반투명 패널로 띄웁니다. 단축키 **Ctrl+Alt+Shift+F12** (마우스 버튼에 할당해 쓰는 용도). 다시 누르거나 Esc / 클릭으로 닫힙니다 |
+| 마우스 도움말 편집... | 같은 그림의 각 상자에 설명을 입력합니다. `%LOCALAPPDATA%\OnTopPasskey\mouse-help.txt` 에 저장 |
 | 동작 자가 진단 | 문자표를 대상으로 같은 로직을 시험해 눈으로 확인합니다 |
 | 설정 파일 열기 / 설정 다시 읽기 | |
 | 종료 | |

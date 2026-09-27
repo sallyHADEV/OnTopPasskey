@@ -1,4 +1,4 @@
-// OnTopPasskey - Windows Hello / 패스키 인증 창을 항상 위로 + 포커스 강제
+﻿// OnTopPasskey - Windows Hello / 패스키 인증 창을 항상 위로 + 포커스 강제
 //
 // [문제]
 //   Windows 11 에서 "Windows 보안" 자격 증명 창(지문/PIN/패스키)이 브라우저 창 뒤에
@@ -66,6 +66,8 @@ namespace OnTopPasskey
         private const int CMD_LOG_NORMAL = 111;
         private const int CMD_LOG_VERBOSE = 112;
         private const int CMD_LOG_CLEAR = 113;
+        private const int CMD_HELP_SHOW = 120;
+        private const int CMD_HELP_EDIT = 121;
 
         private const int RetryIntervalMs = 100;
         private const int DenialsBeforeGiveUp = 10;     // UIPI 거부가 이만큼 이어지면 포기
@@ -147,6 +149,9 @@ namespace OnTopPasskey
                 AddTrayIcon();
                 InstallDetectors();
                 if (Config.SafetyPollMs > 0) StartSafetyTimer();
+                if (!Native.RegisterHotKey(_hwnd, MouseHelp.HotkeyId, MouseHelp.HotkeyMods, MouseHelp.HotkeyVk))
+                    Log.Write(L.T("마우스 도움말 단축키 등록 실패 (다른 프로그램이 사용 중): ",
+                                  "Mouse help shortcut is taken by another program: ") + MouseHelp.HotkeyText);
 
                 Log.Write(L.T("=== 시작 ===  ", "=== start ===  ") + Diag.SelfDescription()
                           + "  logLevel=" + Config.LogLevel
@@ -157,6 +162,7 @@ namespace OnTopPasskey
 
                 int rc = MessageLoop();
 
+                Native.UnregisterHotKey(_hwnd, MouseHelp.HotkeyId);
                 RemoveDetectors();
                 RemoveTrayIcon();
                 Log.Write(L.T("=== 종료 ===", "=== exit ==="));
@@ -280,6 +286,12 @@ namespace OnTopPasskey
                 int ev = (int)(lParam.ToInt64() & 0xFFFF);
                 if (ev == Native.WM_RBUTTONUP || ev == Native.WM_LBUTTONUP || ev == Native.WM_CONTEXTMENU)
                     ShowMenu();
+                return IntPtr.Zero;
+            }
+
+            if (msg == Native.WM_HOTKEY)
+            {
+                if (wParam.ToInt32() == MouseHelp.HotkeyId) RunHelp(false);
                 return IntPtr.Zero;
             }
 
@@ -715,6 +727,12 @@ namespace OnTopPasskey
                         new IntPtr(CMD_STARTUP), L.T("Windows 시작 시 자동 실행", "Start with Windows"));
 
                 Native.AppendMenu(menu, Native.MF_SEPARATOR, IntPtr.Zero, null);
+                Native.AppendMenu(menu, Native.MF_STRING, new IntPtr(CMD_HELP_SHOW),
+                    L.T("마우스 도움말 보기	", "Show mouse help	") + MouseHelp.HotkeyText);
+                Native.AppendMenu(menu, Native.MF_STRING, new IntPtr(CMD_HELP_EDIT),
+                    L.T("마우스 도움말 편집...", "Edit mouse help..."));
+
+                Native.AppendMenu(menu, Native.MF_SEPARATOR, IntPtr.Zero, null);
                 if (Diag.SelfRid < Native.SECURITY_MANDATORY_HIGH_RID)
                     Native.AppendMenu(menu, Native.MF_STRING, new IntPtr(CMD_ELEVATE),
                         L.T("관리자 권한으로 다시 실행 (권한 부족 시)",
@@ -786,6 +804,8 @@ namespace OnTopPasskey
 
                 case CMD_ELEVATE: Elevate(); break;
                 case CMD_TEST: SelfTest.Run(_hwnd); break;
+                case CMD_HELP_SHOW: RunHelp(false); break;
+                case CMD_HELP_EDIT: RunHelp(true); break;
                 case CMD_LOG: Shell.OpenInNotepad(Log.FilePath); break;
                 case CMD_CONFIG: Shell.OpenInNotepad(Config.ConfigPath); break;
 
@@ -799,6 +819,13 @@ namespace OnTopPasskey
                     Native.PostQuitMessage(0);
                     break;
             }
+        }
+
+        /// <summary>도움말 패널의 예외가 본체(인증 창 감시)를 죽이지 않게 막는다.</summary>
+        private static void RunHelp(bool edit)
+        {
+            try { if (edit) MouseHelp.Edit(); else MouseHelp.Toggle(); }
+            catch (Exception ex) { Log.WriteAlways(L.T("마우스 도움말 오류: ", "Mouse help error: ") + ex); }
         }
 
         /// <summary>
@@ -1584,6 +1611,7 @@ namespace OnTopPasskey
         public const int WM_APP = 0x8000;
         public const uint WM_DESTROY = 0x0002;
         public const uint WM_TIMER = 0x0113;
+        public const uint WM_HOTKEY = 0x0312;
         public const int WM_LBUTTONUP = 0x0202;
         public const int WM_RBUTTONUP = 0x0205;
         public const int WM_CONTEXTMENU = 0x007B;
@@ -1835,6 +1863,12 @@ namespace OnTopPasskey
 
         [DllImport("user32.dll", SetLastError = true)]
         public static extern bool SetForegroundWindow(IntPtr hWnd);
+
+        [DllImport("user32.dll", SetLastError = true)]
+        public static extern bool RegisterHotKey(IntPtr hWnd, int id, int fsModifiers, int vk);
+
+        [DllImport("user32.dll")]
+        public static extern bool UnregisterHotKey(IntPtr hWnd, int id);
 
         [DllImport("user32.dll")]
         public static extern IntPtr SetActiveWindow(IntPtr hWnd);
