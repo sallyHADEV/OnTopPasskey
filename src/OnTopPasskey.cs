@@ -847,7 +847,7 @@ namespace OnTopPasskey
 
         private static void RunFill()
         {
-            WindowFill.Fill(Native.GetForegroundWindow(), true);
+            WindowFill.Fill(Native.GetForegroundWindow(), true, true);
         }
 
         /// <summary>도움말 패널의 예외가 본체(인증 창 감시)를 죽이지 않게 막는다.</summary>

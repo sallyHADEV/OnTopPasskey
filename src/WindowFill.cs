@@ -371,9 +371,17 @@ namespace OnTopPasskey
                     return;
                 }
 
+                // 커서가 창 밖에 있으면(다른 디스플레이 포함) 커서가 가리키는 빈 공간을 고른다.
+                Native.RECT score = currentVisible;
+                Native.POINT cur;
+                if (atCursor && Native.GetCursorPos(out cur) &&
+                    (cur.x < currentVisible.left || cur.x >= currentVisible.right ||
+                     cur.y < currentVisible.top || cur.y >= currentVisible.bottom))
+                    score = new Native.RECT { left = cur.x, top = cur.y, right = cur.x + 1, bottom = cur.y + 1 };
+
                 // 장애물 수집 및 최적 빈 영역 계산 (미리보기는 시작 때 수집한 목록을 전달한다.)
                 Native.RECT targetVisible;
-                if (!TryComputeFill(hwnd, null, currentVisible, atCursor, out targetVisible))
+                if (!TryComputeFill(hwnd, null, score, atCursor, out targetVisible))
                 {
                     Log.Write(L.T("창 채우기: 적합한 빈 공간 없음 (", "Window fill: no suitable empty space found (") + App.ProcessNameOf(hwnd) + ")");
                     return;
@@ -450,7 +458,7 @@ namespace OnTopPasskey
             return Math.Abs(cw - ew) <= ew * 0.1 && Math.Abs(ch - eh) <= eh * 0.1;
         }
 
-        // atCursor: 드래그 중에는 창이 아직 원래 디스플레이에 더 많이 걸쳐 있어도 커서가 있는 디스플레이를 채운다.
+        // atCursor: 드래그·단축키는 창이 어느 디스플레이에 있든 커서가 있는 디스플레이를 채운다.
         private static bool GetWorkArea(IntPtr hwnd, bool atCursor, out Native.RECT workArea)
         {
             workArea = default(Native.RECT);
