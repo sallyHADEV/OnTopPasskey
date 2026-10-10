@@ -39,8 +39,8 @@ using System.Threading;
 // 파일 속성에 박히는 값은 실행 중 바꿀 수 없으므로 영어로 둔다.
 [assembly: AssemblyDescription("Keeps the Windows Hello / passkey prompt on top and focused")]
 [assembly: AssemblyProduct("OnTopPasskey")]
-[assembly: AssemblyVersion("1.0.3.0")]
-[assembly: AssemblyFileVersion("1.0.3.0")]
+[assembly: AssemblyVersion("1.0.5.0")]
+[assembly: AssemblyFileVersion("1.0.5.0")]
 
 namespace OnTopPasskey
 {
@@ -68,22 +68,25 @@ namespace OnTopPasskey
         private const int CMD_LOG_CLEAR = 113;
         private const int CMD_HELP_SHOW = 120;
         private const int CMD_HELP_EDIT = 121;
+        private const int CMD_FILL_WINDOW = 122;
 
-        private const int RetryIntervalMs = 100;
-        private const int DenialsBeforeGiveUp = 10;     // UIPI 거부가 이만큼 이어지면 포기
+        // 1초 주기로 천천히 당겨온다. 감지 즉시 잡지 않고 첫 틱(1초 뒤)에 처음 강제한다.
+        private const int RetryIntervalMs = 1000;
+        private const int DenialsBeforeGiveUp = 5;      // UIPI 거부가 이만큼 이어지면 포기
 
         // 생성 직후 예약 재시도 틱. XAML 호스트는 내용이 비동기로 올라오므로
         // 창이 만들어진 순간 한 번 잡는 것만으로는 내부 콘텐츠에 포커스가 들어가지 않는다.
-        private static readonly int[] ScheduledForceTicks = { 2, 7, 15, 25 };   // 0.2 / 0.7 / 1.5 / 2.5초
+        private static readonly int[] ScheduledForceTicks = { 1, 2, 3 };   // 1 / 2 / 3초
 
         // 포커스를 빼앗겼을 때 다시 잡기까지의 최소 간격(틱).
         // AttachThreadInput 은 두 스레드의 입력 큐를 묶으므로 너무 자주 하면
         // 입력이 직렬화되어 끊기는 느낌을 준다. 그래서 간격을 둔다.
-        private const int RegrabIntervalTicks = 5;      // 500ms
+        private const int RegrabIntervalTicks = 1;      // 1초
 
         // --------------------------------------------------------------- 상태
 
         private static IntPtr _hwnd;
+        internal static IntPtr Hwnd { get { return _hwnd; } }
         private static Native.WndProcDelegate _wndProc;       // GC 방지용 고정 참조
         private static Native.WinEventProc _winEventProc;     // GC 방지용 고정 참조
         private static readonly List<IntPtr> Hooks = new List<IntPtr>(3);
@@ -152,6 +155,9 @@ namespace OnTopPasskey
                 if (!Native.RegisterHotKey(_hwnd, MouseHelp.HotkeyId, MouseHelp.HotkeyMods, MouseHelp.HotkeyVk))
                     Log.Write(L.T("마우스 도움말 단축키 등록 실패 (다른 프로그램이 사용 중): ",
                                   "Mouse help shortcut is taken by another program: ") + MouseHelp.HotkeyText);
+                if (!Native.RegisterHotKey(_hwnd, WindowFill.HotkeyId, WindowFill.HotkeyMods, WindowFill.HotkeyVk))
+                    Log.Write(L.T("창 채우기 단축키 등록 실패 (다른 프로그램이 사용 중): ",
+                                  "Window fill shortcut is taken by another program: ") + WindowFill.HotkeyText);
 
                 Log.Write(L.T("=== 시작 ===  ", "=== start ===  ") + Diag.SelfDescription()
                           + "  logLevel=" + Config.LogLevel
@@ -162,6 +168,8 @@ namespace OnTopPasskey
 
                 int rc = MessageLoop();
 
+                WindowFill.Shutdown();
+                Native.UnregisterHotKey(_hwnd, WindowFill.HotkeyId);
                 Native.UnregisterHotKey(_hwnd, MouseHelp.HotkeyId);
                 RemoveDetectors();
                 RemoveTrayIcon();
@@ -240,6 +248,9 @@ namespace OnTopPasskey
             // (3) 선택: 모든 창 표시 이벤트. 감지율이 가장 높지만 콜백 빈도도 가장 높다.
             if (Config.UseObjectShowHook)
                 AddHook(Native.EVENT_OBJECT_SHOW, Native.EVENT_OBJECT_SHOW);
+
+            // (4) 창 드래그 이동 감지 (Alt+드래그 또는 허용 앱 자동 채우기)
+            AddHook(Native.EVENT_SYSTEM_MOVESIZESTART, Native.EVENT_SYSTEM_MOVESIZEEND);
         }
 
         private static void AddHook(uint min, uint max)
@@ -264,6 +275,18 @@ namespace OnTopPasskey
             // 가장 싼 1차 필터: 창 자체에 대한 이벤트가 아니면 즉시 반려한다.
             if (idObject != Native.OBJID_WINDOW || idChild != Native.CHILDID_SELF) return;
             if (hwnd == IntPtr.Zero) return;
+
+            if (eventType == Native.EVENT_SYSTEM_MOVESIZESTART)
+            {
+                WindowFill.OnMoveSizeStart(hwnd);
+                return;
+            }
+            if (eventType == Native.EVENT_SYSTEM_MOVESIZEEND)
+            {
+                WindowFill.OnMoveSizeEnd(hwnd);
+                return;
+            }
+
             Consider(hwnd, "winevent");
         }
 
@@ -291,7 +314,9 @@ namespace OnTopPasskey
 
             if (msg == Native.WM_HOTKEY)
             {
-                if (wParam.ToInt32() == MouseHelp.HotkeyId) RunHelp(false);
+                int hk = wParam.ToInt32();
+                if (hk == MouseHelp.HotkeyId) RunHelp(false);
+                else if (hk == WindowFill.HotkeyId) RunFill();
                 return IntPtr.Zero;
             }
 
@@ -300,11 +325,13 @@ namespace OnTopPasskey
                 int id = wParam.ToInt32();
                 if (id == TIMER_RETRY) RetryTick();
                 else if (id == TIMER_SAFETY) SafetyScan();
+                else if (id == WindowFill.PreviewTimerId) WindowFill.PreviewTick();
                 return IntPtr.Zero;
             }
 
             if (msg == Native.WM_DESTROY)
             {
+                WindowFill.Shutdown();
                 Native.PostQuitMessage(0);
                 return IntPtr.Zero;
             }
@@ -322,7 +349,7 @@ namespace OnTopPasskey
 
         private static void Consider(IntPtr hwnd, string source)
         {
-            if (hwnd == _hwnd) return;
+            if (hwnd == _hwnd || WindowFill.IsPreviewWindow(hwnd)) return;
             if (!Native.IsWindowVisible(hwnd)) return;
 
             // 2차 필터: 클래스명 (커널 호출 1회, 매우 저렴)
@@ -364,9 +391,6 @@ namespace OnTopPasskey
                 WasNotTopmost.Add(hwnd);
             }
 
-            Force.Result r = Force.Foreground(hwnd);
-            Tracked[hwnd].EverForeground = r.GotForeground;
-
             if (title == null) title = GetTitle(hwnd);
             Log.Write(L.T("[감지] ", "[detect] ") + "class=\"" + cls + "\" title=\"" + title
                       + "\" src=" + source
@@ -378,14 +402,6 @@ namespace OnTopPasskey
                 DiagDone.Add(hwnd);
                 Log.Write(L.T("[계측] ", "[probe] ") + Diag.Target(hwnd));
             }
-            Log.Write(L.T("[강제] ", "[force] ") + r);
-            if (r.IntegrityBlocked) WarnPrivilege(hwnd);
-            else if (!r.GotForeground)
-                Log.Write(L.T("[대기] 첫 시도에서 포그라운드를 못 잡았습니다(포그라운드 잠금). "
-                              + "예약 재시도로 계속 시도합니다.",
-                              "[wait] First attempt did not take the foreground (foreground lock). "
-                              + "Scheduled retries will keep trying."));
-
             StartRetryTimer();
         }
 
@@ -549,11 +565,13 @@ namespace OnTopPasskey
                     t.LastForceTick = t.Ticks;
                     Force.Result rr = Force.Foreground(h);
                     if (rr.GotForeground) t.EverForeground = true;
+                    if (t.Ticks == 1) Log.Write(L.T("[강제] ", "[force] ") + rr);
 
                     // UIPI 로 막힌 창은 계속 두드려도 소용없다. 몇 번 확인 후 포기한다.
                     if (rr.IntegrityBlocked)
                     {
                         t.Denials++;
+                        if (t.Denials == 1) WarnPrivilege(h);
                         if (t.Denials >= DenialsBeforeGiveUp)
                         {
                             Log.Write(L.T("[권한] " + t.Denials + "회 거부되어 이 창에 대한 재시도를 중단합니다.",
@@ -727,6 +745,8 @@ namespace OnTopPasskey
                         new IntPtr(CMD_STARTUP), L.T("Windows 시작 시 자동 실행", "Start with Windows"));
 
                 Native.AppendMenu(menu, Native.MF_SEPARATOR, IntPtr.Zero, null);
+                Native.AppendMenu(menu, Native.MF_STRING, new IntPtr(CMD_FILL_WINDOW),
+                    L.T("창 빈 공간 채우기	", "Fill window into empty space	") + WindowFill.HotkeyText);
                 Native.AppendMenu(menu, Native.MF_STRING, new IntPtr(CMD_HELP_SHOW),
                     L.T("마우스 도움말 보기	", "Show mouse help	") + MouseHelp.HotkeyText);
                 Native.AppendMenu(menu, Native.MF_STRING, new IntPtr(CMD_HELP_EDIT),
@@ -748,13 +768,14 @@ namespace OnTopPasskey
 
                 Native.POINT pt;
                 Native.GetCursorPos(out pt);
+                IntPtr prevForeground = Native.GetForegroundWindow();
                 Native.SetForegroundWindow(_hwnd);   // 메뉴가 즉시 닫히는 문제 방지
 
                 int cmd = Native.TrackPopupMenu(menu,
                     Native.TPM_RIGHTBUTTON | Native.TPM_RETURNCMD | Native.TPM_NONOTIFY,
                     pt.x, pt.y, 0, _hwnd, IntPtr.Zero);
 
-                if (cmd != 0) OnCommand(cmd);
+                if (cmd != 0) OnCommand(cmd, prevForeground);
             }
             finally
             {
@@ -763,7 +784,7 @@ namespace OnTopPasskey
             }
         }
 
-        private static void OnCommand(int cmd)
+        private static void OnCommand(int cmd, IntPtr targetHwnd)
         {
             switch (cmd)
             {
@@ -804,6 +825,9 @@ namespace OnTopPasskey
 
                 case CMD_ELEVATE: Elevate(); break;
                 case CMD_TEST: SelfTest.Run(_hwnd); break;
+                case CMD_FILL_WINDOW:
+                    WindowFill.Fill(WindowFill.MenuTarget(targetHwnd), true);
+                    break;
                 case CMD_HELP_SHOW: RunHelp(false); break;
                 case CMD_HELP_EDIT: RunHelp(true); break;
                 case CMD_LOG: Shell.OpenInNotepad(Log.FilePath); break;
@@ -819,6 +843,11 @@ namespace OnTopPasskey
                     Native.PostQuitMessage(0);
                     break;
             }
+        }
+
+        private static void RunFill()
+        {
+            WindowFill.Fill(Native.GetForegroundWindow(), true);
         }
 
         /// <summary>도움말 패널의 예외가 본체(인증 창 감시)를 죽이지 않게 막는다.</summary>
@@ -1194,6 +1223,8 @@ namespace OnTopPasskey
 
         public static void Run(IntPtr owner)
         {
+            WindowFill.RunSelfTest();
+
             Log.Write(L.T("[자가진단] 시작 - " + TestProcess + " 를 대상으로 강제 포그라운드를 시험합니다.",
                           "[selftest] Start - trying forced foreground against " + TestProcess));
             Native.ShellExecute(IntPtr.Zero, "open", TestProcess, null, null, Native.SW_SHOWNORMAL);
@@ -1257,6 +1288,10 @@ namespace OnTopPasskey
         public static readonly List<string> TitleEquals = new List<string>(4);
         public static readonly List<string> TitleContains = new List<string>(4);
 
+        public static readonly List<string> FillAutoProcesses = new List<string>(4);
+        public static readonly List<string> FillIgnoreProcesses = new List<string>(4);
+        public static bool FillOnAltDrag = true;
+
         /// <summary>0 = 기록 안 함, 1 = 기본(감지/결과만), 2 = 자세히(추적 포함)</summary>
         public static int LogLevel = 1;
 
@@ -1296,6 +1331,8 @@ namespace OnTopPasskey
         {
             ClassContains.Clear(); ProcessNames.Clear();
             TitleEquals.Clear(); TitleContains.Clear();
+            FillAutoProcesses.Clear(); FillIgnoreProcesses.Clear();
+            FillOnAltDrag = true;
 
             // 1순위 신호: 최상위 창 클래스명. 제목과 달리 로케일에 영향받지 않는다.
             ClassContains.Add("Credential Dialog Xaml Host");
@@ -1303,9 +1340,8 @@ namespace OnTopPasskey
             ProcessNames.Add("CredentialUIBroker.exe");
             ProcessNames.Add("LogonUI.exe");
 
-            TitleEquals.Add("Windows 보안");
-            TitleEquals.Add("Windows Security");
-            TitleContains.Add("Windows Hello");
+            // 제목 규칙은 기본으로 두지 않는다. "Windows 보안" 제목은 보안 앱(SecHealthUI)과
+            // 시스템 대화상자까지 잡아 엉뚱한 창을 당겨왔다. 클래스명과 프로세스명이면 충분하다.
 
             Language = "auto";
             LogLevel = LogNormal;
@@ -1326,10 +1362,14 @@ namespace OnTopPasskey
                 if (!File.Exists(ConfigPath)) { Save(); return; }
 
                 bool sawRule = false;
+                bool sawFillAuto = false;
+                bool sawFillIgn = false;
                 var cls = new List<string>();
                 var prc = new List<string>();
                 var teq = new List<string>();
                 var tct = new List<string>();
+                var fauto = new List<string>();
+                var fign = new List<string>();
 
                 foreach (var raw in File.ReadAllLines(ConfigPath, Encoding.UTF8))
                 {
@@ -1348,6 +1388,17 @@ namespace OnTopPasskey
                         case "processname": prc.Add(val); sawRule = true; break;
                         case "titleequals": teq.Add(val); sawRule = true; break;
                         case "titlecontains": tct.Add(val); sawRule = true; break;
+                        case "fillautoprocess":
+                        case "fillautoprocesses":
+                            AddSplit(fauto, val);
+                            sawFillAuto = true;
+                            break;
+                        case "fillignoreprocess":
+                        case "fillignoreprocesses":
+                            AddSplit(fign, val);
+                            sawFillIgn = true;
+                            break;
+                        case "fillonaltdrag": FillOnAltDrag = ParseBool(val); break;
                         case "language": Language = val; break;
                         case "loglevel":
                             int lv;
@@ -1374,6 +1425,11 @@ namespace OnTopPasskey
                 // 파싱 전에 한 번 적용해 두는 것은 파일이 없어 Save() 로 넘어가는 경우에만 쓰인다.
                 L.Apply(Language);
 
+                // 예전 기본 제목 규칙이 그대로 저장된 설정이면 걷어내고 다시 저장한다.
+                bool oldTitleDefaults = teq.Count == 2 && teq.Contains("Windows 보안") && teq.Contains("Windows Security")
+                                        && tct.Count == 1 && tct[0] == "Windows Hello";
+                if (oldTitleDefaults) { teq.Clear(); tct.Clear(); }
+
                 if (sawRule)
                 {
                     Swap(ClassContains, cls);
@@ -1381,10 +1437,23 @@ namespace OnTopPasskey
                     Swap(TitleEquals, teq);
                     Swap(TitleContains, tct);
                 }
+                if (sawFillAuto) Swap(FillAutoProcesses, fauto);
+                if (sawFillIgn) Swap(FillIgnoreProcesses, fign);
+                if (oldTitleDefaults) Save();
             }
             catch (Exception ex)
             {
                 Log.Write(L.T("설정 읽기 실패: ", "Failed to read settings: ") + ex.Message);
+            }
+        }
+
+        private static void AddSplit(List<string> target, string val)
+        {
+            string[] parts = val.Split(new char[] { ',', ';' }, StringSplitOptions.RemoveEmptyEntries);
+            for (int i = 0; i < parts.Length; i++)
+            {
+                string s = parts[i].Trim();
+                if (s.Length > 0) target.Add(s);
             }
         }
 
@@ -1422,6 +1491,34 @@ namespace OnTopPasskey
                 for (int i = 0; i < ProcessNames.Count; i++) sb.AppendLine("ProcessName=" + ProcessNames[i]);
                 for (int i = 0; i < TitleEquals.Count; i++) sb.AppendLine("TitleEquals=" + TitleEquals[i]);
                 for (int i = 0; i < TitleContains.Count; i++) sb.AppendLine("TitleContains=" + TitleContains[i]);
+                sb.AppendLine();
+                sb.AppendLine(L.T("# 창 빈 공간 채우기 (단축키: Ctrl+Alt+Shift+F11)",
+                                  "# Fill window into empty space (Shortcut: Ctrl+Alt+Shift+F11)"));
+                sb.AppendLine(L.T("# Alt 키를 누른 채 창을 드래그하여 놓았을 때 빈 공간 채우기 자동 실행 여부 (1=사용, 0=사용 안 함)",
+                                  "# Whether to auto-fill when dropping a dragged window while holding Alt (1=enabled, 0=disabled)"));
+                sb.AppendLine("FillOnAltDrag=" + B(FillOnAltDrag));
+                sb.AppendLine(L.T("# Alt 키 없이도 드래그 후 놓으면 자동으로 빈 공간을 채울 대상 프로세스 목록 (콤마 구분 또는 여러 줄)",
+                                  "# Process names to auto-fill on drag-drop without holding Alt (comma-separated or multiple lines)"));
+                if (FillAutoProcesses.Count > 0)
+                {
+                    for (int i = 0; i < FillAutoProcesses.Count; i++)
+                        sb.AppendLine("FillAutoProcesses=" + FillAutoProcesses[i]);
+                }
+                else
+                {
+                    sb.AppendLine(L.T("# FillAutoProcesses=Muse.exe", "# FillAutoProcesses=Muse.exe"));
+                }
+                sb.AppendLine(L.T("# 빈 공간 계산 시 장애물(벽)에서 제외할 프로세스 목록",
+                                  "# Process names to ignore as obstacles during empty space calculation"));
+                if (FillIgnoreProcesses.Count > 0)
+                {
+                    for (int i = 0; i < FillIgnoreProcesses.Count; i++)
+                        sb.AppendLine("FillIgnoreProcesses=" + FillIgnoreProcesses[i]);
+                }
+                else
+                {
+                    sb.AppendLine(L.T("# FillIgnoreProcesses=Rainmeter.exe", "# FillIgnoreProcesses=Rainmeter.exe"));
+                }
                 sb.AppendLine();
                 sb.AppendLine(L.T("# 로그 기록 수준", "# Logging level"));
                 sb.AppendLine(L.T("#   0 = 기록 안 함 (파일에 아무것도 쓰지 않습니다)",
@@ -1612,6 +1709,10 @@ namespace OnTopPasskey
         public const uint WM_DESTROY = 0x0002;
         public const uint WM_TIMER = 0x0113;
         public const uint WM_HOTKEY = 0x0312;
+        public const uint WM_NCHITTEST = 0x0084;
+        public const uint WM_MOUSEACTIVATE = 0x0021;
+        public const int HTTRANSPARENT = -1;
+        public const int MA_NOACTIVATE = 3;
         public const int WM_LBUTTONUP = 0x0202;
         public const int WM_RBUTTONUP = 0x0205;
         public const int WM_CONTEXTMENU = 0x007B;
@@ -1627,25 +1728,38 @@ namespace OnTopPasskey
         public const int WS_EX_TOOLWINDOW = 0x00000080;
         public const int WS_EX_TOPMOST = 0x00000008;
         public const int WS_EX_NOACTIVATE = 0x08000000;
+        public const int WS_EX_LAYERED = 0x00080000;
+        public const uint LWA_ALPHA = 0x00000002;
+        public const int GRAY_BRUSH = 2;
 
         public const uint SWP_NOSIZE = 0x0001;
         public const uint SWP_NOMOVE = 0x0002;
+        public const uint SWP_NOZORDER = 0x0004;
         public const uint SWP_NOACTIVATE = 0x0010;
         public const uint SWP_SHOWWINDOW = 0x0040;
 
+        public const int SW_HIDE = 0;
         public const int SW_SHOWNORMAL = 1;
         public const int SW_RESTORE = 9;
 
         public const uint GA_ROOTOWNER = 3;
         public const uint GW_OWNER = 4;
         public const int GWL_EXSTYLE = -20;
+        public const int WS_EX_TRANSPARENT = 0x00000020;
+        public const int VK_MENU = 0x12;
 
         public const int OBJID_WINDOW = 0;
         public const int CHILDID_SELF = 0;
 
         public const uint EVENT_SYSTEM_FOREGROUND = 0x0003;
+        public const uint EVENT_SYSTEM_MOVESIZESTART = 0x000A;
+        public const uint EVENT_SYSTEM_MOVESIZEEND = 0x000B;
         public const uint EVENT_SYSTEM_DIALOGSTART = 0x0010;
         public const uint EVENT_OBJECT_SHOW = 0x8002;
+
+        public const uint MONITOR_DEFAULTTONEAREST = 2;
+        public const int DWMWA_EXTENDED_FRAME_BOUNDS = 9;
+        public const int DWMWA_CLOAKED = 14;
 
         public const uint WINEVENT_OUTOFCONTEXT = 0x0000;
         public const uint WINEVENT_SKIPOWNPROCESS = 0x0002;
@@ -1697,6 +1811,15 @@ namespace OnTopPasskey
 
         [StructLayout(LayoutKind.Sequential)]
         public struct RECT { public int left, top, right, bottom; }
+
+        [StructLayout(LayoutKind.Sequential)]
+        public struct MONITORINFO
+        {
+            public int cbSize;
+            public RECT rcMonitor;
+            public RECT rcWork;
+            public uint dwFlags;
+        }
 
         [StructLayout(LayoutKind.Sequential)]
         public struct GUITHREADINFO
@@ -1765,6 +1888,15 @@ namespace OnTopPasskey
             int dwStyle, int x, int y, int nWidth, int nHeight, IntPtr hWndParent, IntPtr hMenu,
             IntPtr hInstance, IntPtr lpParam);
 
+        [DllImport("user32.dll")]
+        public static extern bool DestroyWindow(IntPtr hWnd);
+
+        [DllImport("user32.dll", SetLastError = true)]
+        public static extern bool SetLayeredWindowAttributes(IntPtr hwnd, uint crKey, byte bAlpha, uint dwFlags);
+
+        [DllImport("gdi32.dll")]
+        public static extern IntPtr GetStockObject(int fnObject);
+
         [DllImport("user32.dll", CharSet = CharSet.Unicode)]
         public static extern IntPtr DefWindowProc(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam);
 
@@ -1791,9 +1923,6 @@ namespace OnTopPasskey
 
         [DllImport("user32.dll", CharSet = CharSet.Unicode)]
         public static extern int MessageBox(IntPtr hWnd, string text, string caption, uint type);
-
-        [DllImport("user32.dll", CharSet = CharSet.Unicode)]
-        public static extern IntPtr FindWindow(string lpClassName, string lpWindowName);
 
         [DllImport("user32.dll")]
         public static extern IntPtr LoadIcon(IntPtr hInstance, IntPtr lpIconName);
@@ -1857,6 +1986,33 @@ namespace OnTopPasskey
 
         [DllImport("user32.dll")]
         public static extern bool IsIconic(IntPtr hWnd);
+
+        [DllImport("user32.dll")]
+        public static extern bool IsZoomed(IntPtr hWnd);
+
+        [DllImport("user32.dll")]
+        public static extern bool GetWindowRect(IntPtr hWnd, out RECT lpRect);
+
+        [DllImport("user32.dll")]
+        public static extern IntPtr MonitorFromWindow(IntPtr hwnd, uint dwFlags);
+
+        [DllImport("user32.dll")]
+        public static extern IntPtr MonitorFromPoint(POINT pt, uint dwFlags);
+
+        [DllImport("user32.dll")]
+        public static extern uint GetDpiForWindow(IntPtr hwnd);
+
+        [DllImport("user32.dll")]
+        public static extern bool GetMonitorInfo(IntPtr hMonitor, ref MONITORINFO lpmi);
+
+        [DllImport("user32.dll")]
+        public static extern short GetAsyncKeyState(int vKey);
+
+        [DllImport("dwmapi.dll")]
+        public static extern int DwmGetWindowAttribute(IntPtr hwnd, int dwAttribute, out RECT pvAttribute, int cbAttribute);
+
+        [DllImport("dwmapi.dll")]
+        public static extern int DwmGetWindowAttribute(IntPtr hwnd, int dwAttribute, out int pvAttribute, int cbAttribute);
 
         [DllImport("user32.dll")]
         public static extern IntPtr GetForegroundWindow();

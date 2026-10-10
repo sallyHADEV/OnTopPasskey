@@ -1,4 +1,4 @@
-// OnTopPasskey 설치 관리자
+﻿// OnTopPasskey 설치 관리자
 //
 // 본체(OnTopPasskey.exe)를 리소스로 품고 있는 단일 설치 파일이다.
 // 외부 설치 도구(Inno Setup, WiX 등) 없이 Windows 에 기본 포함된 csc.exe 만으로 빌드된다.
@@ -32,8 +32,8 @@ using System.Windows.Forms;
 [assembly: AssemblyTitle("OnTopPasskey Setup")]
 [assembly: AssemblyDescription("OnTopPasskey Setup")]
 [assembly: AssemblyProduct("OnTopPasskey")]
-[assembly: AssemblyVersion("1.0.3.0")]
-[assembly: AssemblyFileVersion("1.0.3.0")]
+[assembly: AssemblyVersion("1.0.5.0")]
+[assembly: AssemblyFileVersion("1.0.5.0")]
 
 namespace OnTopPasskeySetup
 {
@@ -67,7 +67,7 @@ namespace OnTopPasskeySetup
     internal static class Program
     {
         public const string AppName = "OnTopPasskey";
-        public const string Version = "1.0.3";
+        public const string Version = "1.0.5";
         public const string TaskName = "OnTopPasskey";
         public const string ExeName = "OnTopPasskey.exe";
         public const string UninstExe = "uninstall.exe";

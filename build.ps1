@@ -33,7 +33,7 @@ if (-not (Test-Path $manifest)) { throw "매니페스트가 없습니다: $manif
   /reference:System.Drawing.dll `
   /reference:System.Windows.Forms.dll `
   /resource:"$(Join-Path $root 'assets\mouse-help.png'),mouse-help.png" `
-  $src (Join-Path $root 'src\MouseHelp.cs')
+  $src (Join-Path $root 'src\MouseHelp.cs') (Join-Path $root 'src\WindowFill.cs')
 
 if ($LASTEXITCODE -ne 0) { throw "빌드 실패 (exit $LASTEXITCODE)" }
 Write-Output "빌드 완료: $out"

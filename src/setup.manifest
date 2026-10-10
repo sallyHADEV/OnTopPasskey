@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0">
-  <assemblyIdentity version="1.0.3.0" name="OnTopPasskeySetup" type="win32" />
+  <assemblyIdentity version="1.0.5.0" name="OnTopPasskeySetup" type="win32" />
 
   <!-- 설치 관리자는 Program Files 에 쓰고 작업 스케줄러를 등록하므로 관리자 권한이 필요하다.
        실행하면 곧바로 UAC 동의 창이 뜬다. 일반적인 설치 파일과 같은 동작이다. -->

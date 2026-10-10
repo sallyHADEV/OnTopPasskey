@@ -8,7 +8,7 @@
 $ErrorActionPreference = 'Stop'
 
 $root    = Split-Path -Parent $MyInvocation.MyCommand.Path
-$version = '1.0.3'
+$version = '1.0.5'
 $dist    = Join-Path $root 'dist'
 $setup   = Join-Path $dist "OnTopPasskeySetup-$version.exe"
 

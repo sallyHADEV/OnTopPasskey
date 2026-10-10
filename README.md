@@ -1,4 +1,4 @@
-<img src="assets/meerkat-preview.png" width="96" align="right" alt="OnTopPasskey icon">
+﻿<img src="assets/meerkat-preview.png" width="96" align="right" alt="OnTopPasskey icon">
 
 # OnTopPasskey
 
@@ -63,6 +63,7 @@ replace that file would gain administrator rights at your next logon.
 | Enabled | Turns the watcher on and off |
 | Logging ▸ | See below |
 | Restart as administrator | Only shown if the app is not already elevated |
+| Fill window into empty space | Fills foreground window into the matching empty rectangular space. Shortcut **Ctrl+Alt+Shift+F11** (press again to undo); also auto-fills when dropping a window while holding **Alt**. A translucent gray preview shows the fill area during the drag |
 | Show mouse help | Semi-transparent panel labelling each mouse button. Shortcut **Ctrl+Alt+Shift+F12** (meant to be assigned to a mouse button); press again, Esc or click to close |
 | Edit mouse help... | Same picture with an input field in every box. Saved to `%LOCALAPPDATA%\OnTopPasskey\mouse-help.txt` |
 | Self test | Tries the same logic against Character Map so you can see it work |
@@ -111,6 +112,9 @@ the Start menu. A successful run looks like this:
 | `UseObjectShowHook` | `1` | Secondary detector; `0` is slightly lighter |
 | `SafetyPollMs` | `0` | Last-resort scan interval in ms; `0` = off |
 | `TraceMs` | `500` | Trace interval when `LogLevel=2` |
+| `FillOnAltDrag` | `1` | Auto-fill when dropping a dragged window while holding Alt |
+| `FillAutoProcesses` | (empty) | Process names to auto-fill on drag-drop without holding Alt |
+| `FillIgnoreProcesses` | (empty) | Process names to ignore as obstacles during calculation |
 
 Writing any rule entry (`ClassContains`, `ProcessName`, `TitleEquals`,
 `TitleContains`) replaces the built-in rules entirely.
@@ -212,6 +216,7 @@ OnTopPasskey는 그 창이 나타나는 순간을 감지해 곧바로 맨 앞으
 | 활성화 | 감시 켜기 / 끄기 |
 | 로그 ▸ | 아래 표 참조 |
 | 관리자 권한으로 다시 실행 | 이미 상승 상태면 표시되지 않습니다 |
+| 창 빈 공간 채우기 | 포그라운드 창을 이웃 창들과 겹치지 않는 빈 직사각형 공간으로 맞춥니다. 단축키 **Ctrl+Alt+Shift+F11** (다시 누르면 원래 크기로 복원). **Alt** 키를 누른 채 창을 드래그해 놓아도 자동 채워집니다. 드래그 중에는 채울 영역을 반투명 회색으로 미리 보여줍니다 |
 | 마우스 도움말 보기 | 마우스 버튼별 설명을 반투명 패널로 띄웁니다. 단축키 **Ctrl+Alt+Shift+F12** (마우스 버튼에 할당해 쓰는 용도). 다시 누르거나 Esc / 클릭으로 닫힙니다 |
 | 마우스 도움말 편집... | 같은 그림의 각 상자에 설명을 입력합니다. `%LOCALAPPDATA%\OnTopPasskey\mouse-help.txt` 에 저장 |
 | 동작 자가 진단 | 문자표를 대상으로 같은 로직을 시험해 눈으로 확인합니다 |
@@ -260,6 +265,9 @@ OnTopPasskey는 그 창이 나타나는 순간을 감지해 곧바로 맨 앞으
 | `UseObjectShowHook` | `1` | 보조 감지기. `0`이면 조금 더 가벼움 |
 | `SafetyPollMs` | `0` | 최후의 안전망 스캔 주기(ms). `0` = 사용 안 함 |
 | `TraceMs` | `500` | `LogLevel=2`일 때 추적 주기 |
+| `FillOnAltDrag` | `1` | Alt 키를 누른 채 창을 드래그해서 놓았을 때 빈 공간 자동 채우기 |
+| `FillAutoProcesses` | (비어있음) | Alt 키 없이도 드래그 후 놓으면 자동으로 채울 프로세스 목록 |
+| `FillIgnoreProcesses` | (비어있음) | 빈 공간 계산 시 장애물(벽)에서 제외할 프로세스 목록 |
 
 규칙 항목(`ClassContains`, `ProcessName`, `TitleEquals`, `TitleContains`)을 하나라도
 직접 적으면 기본 규칙 대신 파일의 규칙만 사용합니다.
