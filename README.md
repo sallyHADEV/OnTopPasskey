@@ -1,4 +1,4 @@
-﻿<img src="assets/meerkat-preview.png" width="96" align="right" alt="OnTopPasskey icon">
+﻿<img src="assets/icon-preview.png" width="96" align="right" alt="OnTopPasskey icon">
 
 # OnTopPasskey
 
@@ -30,7 +30,7 @@ own finger — the program only fixes where the window sits and who has focus.
 1. Download `OnTopPasskeySetup-x.y.z.exe` from the
    [Releases page](https://github.com/sallyHADEV/OnTopPasskey/releases/latest).
 2. Run it and approve the UAC prompt.
-3. Done. A meerkat icon appears in the notification area.
+3. Done. A gem icon appears in the notification area.
 
 The app installs to `C:\Program Files\OnTopPasskey` and starts automatically at
 logon — with no UAC prompt after this first one.
@@ -186,7 +186,7 @@ OnTopPasskey는 그 창이 나타나는 순간을 감지해 곧바로 맨 앞으
 1. [Releases 페이지](https://github.com/sallyHADEV/OnTopPasskey/releases/latest)에서
    `OnTopPasskeySetup-x.y.z.exe`를 내려받습니다.
 2. 실행하고 UAC 동의 창을 승인합니다.
-3. 끝입니다. 알림 영역에 미어캣 아이콘이 나타납니다.
+3. 끝입니다. 알림 영역에 보석 아이콘이 나타납니다.
 
 `C:\Program Files\OnTopPasskey`에 설치되고 로그온할 때 자동으로 실행됩니다. 처음
 한 번 외에는 UAC 창이 뜨지 않습니다.

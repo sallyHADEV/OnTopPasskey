@@ -821,8 +821,8 @@ namespace OnTopPasskeySetup
                 {
                     Installer.StartApp();
                     Log("");
-                    Log(L.T("프로그램을 시작했습니다. 트레이에 미어캣 아이콘이 나타납니다.",
-                            "Started. A meerkat icon appears in the notification area."));
+                    Log(L.T("프로그램을 시작했습니다. 트레이에 보석 아이콘이 나타납니다.",
+                            "Started. A gem icon appears in the notification area."));
                 }
 
                 Log("");

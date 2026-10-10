@@ -631,7 +631,7 @@ namespace OnTopPasskey
 
         private static IntPtr _trayIcon;
 
-        /// <summary>exe 에 포함된 미어캣 아이콘을 트레이 크기에 맞춰 한 번만 로드한다.</summary>
+        /// <summary>exe 에 포함된 보석 아이콘을 트레이 크기에 맞춰 한 번만 로드한다.</summary>
         private static IntPtr TrayIcon()
         {
             if (_trayIcon != IntPtr.Zero) return _trayIcon;

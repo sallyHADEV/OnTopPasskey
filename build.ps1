@@ -11,14 +11,9 @@ if (-not (Test-Path $csc)) { throw "csc.exe 를 찾을 수 없습니다." }
 
 if (-not (Test-Path (Join-Path $root 'bin'))) { New-Item -ItemType Directory (Join-Path $root 'bin') | Out-Null }
 
-# 트레이 아이콘(미어캣). 없으면 생성한다.
-# 생성 스크립트는 System.Drawing 이 필요해 Windows PowerShell 로 돌린다.
-$ico = Join-Path $root 'assets\meerkat.ico'
-if (-not (Test-Path $ico)) {
-    Write-Output "아이콘이 없어 새로 생성합니다..."
-    & powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $root 'assets\make-icon.ps1')
-    if (-not (Test-Path $ico)) { throw "아이콘 생성 실패" }
-}
+# 트레이 / 실행 파일 아이콘 (보석)
+$ico = Join-Path $root 'assets\icon.ico'
+if (-not (Test-Path $ico)) { throw "아이콘이 없습니다: $ico" }
 
 $manifest = Join-Path $root 'src\app.manifest'
 if (-not (Test-Path $manifest)) { throw "매니페스트가 없습니다: $manifest" }

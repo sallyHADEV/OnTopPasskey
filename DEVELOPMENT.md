@@ -226,12 +226,12 @@ gh release create v1.0.4 "dist\OnTopPasskeySetup-1.0.4.exe" --title "OnTopPasske
 
 ### 4-4. 아이콘
 
-`assets\make-icon.ps1` 이 GDI+ 로 미어캣을 그려 멀티 사이즈 `.ico` 로 묶는다.
-빌드 시 `/win32icon` 으로 exe 에 포함되므로 런타임에 아이콘 파일은 필요 없다.
+`assets\icon.ico` (보석, 16~256px 7가지 크기). 빌드 시 `/win32icon` 으로 exe 에
+포함되므로 런타임에 아이콘 파일은 필요 없다. (초기 미어캣 아이콘과 생성 스크립트
+`make-icon.ps1` 은 git 기록에 남아 있다.)
 
-- `Bitmap.GetHicon()` + `Icon.Save()` 경로는 **이미지를 16색으로 떨어뜨린다.**
-  그래서 32비트 BGRA DIB 를 직접 써서 `.ico` 컨테이너를 조립한다.
-- 128px 이상은 무압축 DIB 대신 PNG 로 넣는다 (안 그러면 파일이 374KB 가 된다)
+- 64px 이하는 32비트 BGRA DIB, 128px 이상은 PNG 로 담는다. 원본은 전 크기가 PNG 였지만
+  작은 크기는 DIB 가 가장 호환성이 좋아 바꿔 넣었다.
 - 트레이 아이콘은 `LoadImage(hInst, 32512, IMAGE_ICON, SM_CXSMICON, ...)` 로 로드.
   `csc /win32icon` 이 넣는 아이콘 그룹의 리소스 ID 가 32512 다.
 

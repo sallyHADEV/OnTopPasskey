@@ -33,7 +33,7 @@ if ($fileVer -notlike "$version*") {
 Write-Output "[2/3] 설치 관리자 빌드"
 if (-not (Test-Path $dist)) { New-Item -ItemType Directory $dist | Out-Null }
 
-$ico      = Join-Path $root 'assets\meerkat.ico'
+$ico      = Join-Path $root 'assets\icon.ico'
 $manifest = Join-Path $root 'src\setup.manifest'
 $src      = Join-Path $root 'src\Setup.cs'
 
