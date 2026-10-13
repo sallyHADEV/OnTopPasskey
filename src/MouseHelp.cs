@@ -60,7 +60,7 @@ namespace OnTopPasskey
         {
             var p = new Panel(edit, LoadLabels());
             _open = p;
-            p.FormClosed += delegate { _open = null; Mem.Trim(); };
+            p.FormClosed += delegate { if (_open == p) _open = null; Mem.Trim(); };
             if (!edit) { p.Show(); return; }   // 모달이 아닌 폼은 닫힐 때 스스로 Dispose 된다
             p.ShowDialog();
             p.Dispose();
@@ -77,7 +77,7 @@ namespace OnTopPasskey
                     for (int i = 0; i < labels.Length && i < lines.Length; i++) labels[i] = lines[i];
                 }
             }
-            catch (IOException) { }
+            catch (Exception) { }
             for (int i = 0; i < labels.Length; i++) if (labels[i] == null) labels[i] = string.Empty;
             return labels;
         }
@@ -98,7 +98,8 @@ namespace OnTopPasskey
                 Editing = edit;
                 _labels = labels;
                 using (var s = Assembly.GetExecutingAssembly().GetManifestResourceStream("mouse-help.png"))
-                    _img = new Bitmap(s);
+                using (var tmp = new Bitmap(s))
+                    _img = new Bitmap(tmp);
 
                 var area = Screen.FromPoint(Cursor.Position).WorkingArea;
                 _scale = Math.Min(1.2f, Math.Min(area.Width * 0.92f / _img.Width, area.Height * 0.94f / _img.Height));
@@ -193,11 +194,13 @@ namespace OnTopPasskey
                 using (var sf = new StringFormat { Alignment = StringAlignment.Center, LineAlignment = StringAlignment.Center, Trimming = StringTrimming.EllipsisCharacter })
                     for (int i = 0; i < Boxes.Length; i++)
                     {
-                        if (_labels[i].Length == 0) continue;
+                        if (string.IsNullOrWhiteSpace(_labels[i])) continue;
                         var r = Inner(Boxes[i]);
+                        if (r.Width <= 0 || r.Height <= 0) continue;
                         // 한 줄에 안 들어가면 글자를 줄인다 (최소 60%). 그래도 넘치면 줄바꿈.
                         float w = g.MeasureString(_labels[i], _font).Width;
-                        float size = _font.Size * Math.Max(0.6f, Math.Min(1f, r.Width / w));
+                        float ratio = w > 0f ? r.Width / w : 1f;
+                        float size = _font.Size * Math.Max(0.6f, Math.Min(1f, ratio));
                         using (var f = new Font(_font.FontFamily, size, _font.Style, GraphicsUnit.Pixel))
                             g.DrawString(_labels[i], f, Brushes.White, r, sf);
                     }
