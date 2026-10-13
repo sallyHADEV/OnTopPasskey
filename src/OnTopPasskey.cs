@@ -32,6 +32,8 @@ using System.Globalization;
 using System.IO;
 using System.Reflection;
 using System.Runtime.InteropServices;
+using System.Security.AccessControl;
+using System.Security.Principal;
 using System.Text;
 using System.Threading;
 
@@ -90,6 +92,7 @@ namespace OnTopPasskey
         private static Native.WndProcDelegate _wndProc;       // GC 방지용 고정 참조
         private static Native.WinEventProc _winEventProc;     // GC 방지용 고정 참조
         private static readonly List<IntPtr> Hooks = new List<IntPtr>(3);
+        private static IntPtr _objectShowHook;
         private static uint _msgTaskbarCreated;
         private static uint _msgShellHook;
 
@@ -100,7 +103,7 @@ namespace OnTopPasskey
         /// <summary>추적 중인 인증 창 하나의 상태. 보통 0~1개만 존재한다.</summary>
         private sealed class Track
         {
-            public int Ticks;          // 감지 후 경과한 100ms 틱 수
+            public int Ticks;          // 감지 후 경과한 틱 수 (RetryIntervalMs 단위)
             public int LastForceTick;  // 마지막으로 강제를 시도한 틱
             public int Denials;        // UIPI 연속 거부 횟수
             public bool EverForeground;
@@ -109,6 +112,7 @@ namespace OnTopPasskey
         private static readonly Dictionary<IntPtr, Track> Tracked = new Dictionary<IntPtr, Track>(2);
         private static readonly List<IntPtr> WasNotTopmost = new List<IntPtr>(8);
         private static readonly List<IntPtr> DiagDone = new List<IntPtr>(8);
+        private static readonly List<IntPtr> GivenUp = new List<IntPtr>(8);
         private static bool _privilegeWarned;
 
         private static readonly StringBuilder ClassBuf = new StringBuilder(128);
@@ -126,11 +130,26 @@ namespace OnTopPasskey
                 if (string.Equals(args[i], "--replace", StringComparison.OrdinalIgnoreCase)) replace = true;
             }
 
-            bool createdNew;
-            using (var mutex = new Mutex(true, "OnTopPasskey.SingleInstance", out createdNew))
+            bool createdNew = false;
+            Mutex mutex = null;
+            try
+            {
+                var sec = new MutexSecurity();
+                sec.AddAccessRule(new MutexAccessRule(
+                    new SecurityIdentifier(WellKnownSidType.AuthenticatedUserSid, null),
+                    MutexRights.FullControl, AccessControlType.Allow));
+                mutex = new Mutex(true, "OnTopPasskey.SingleInstance", out createdNew, sec);
+            }
+            catch (UnauthorizedAccessException)
+            {
+                // 이미 관리자 권한으로 실행 중인 인스턴스가 기본 보안 설명자로 뮤텍스를 만든 경우
+                createdNew = false;
+            }
+
+            using (mutex)
             {
                 // --replace: 권한 상승 재실행 시 이전 인스턴스가 종료될 때까지 잠시 기다린다.
-                if (!createdNew && replace)
+                if (!createdNew && replace && mutex != null)
                 {
                     try { createdNew = mutex.WaitOne(5000); }
                     catch (AbandonedMutexException) { createdNew = true; }
@@ -148,7 +167,11 @@ namespace OnTopPasskey
                 Config.Load();
                 if (spy) Config.SpyMode = true;
 
-                if (!CreateHiddenWindow()) return 1;
+                if (!CreateHiddenWindow())
+                {
+                    try { mutex.ReleaseMutex(); } catch { }
+                    return 1;
+                }
                 AddTrayIcon();
                 InstallDetectors();
                 if (Config.SafetyPollMs > 0) StartSafetyTimer();
@@ -174,6 +197,7 @@ namespace OnTopPasskey
                 RemoveDetectors();
                 RemoveTrayIcon();
                 Log.Write(L.T("=== 종료 ===", "=== exit ==="));
+                try { mutex.ReleaseMutex(); } catch { }
                 return rc;
             }
         }
@@ -246,20 +270,34 @@ namespace OnTopPasskey
             AddHook(Native.EVENT_SYSTEM_FOREGROUND, Native.EVENT_SYSTEM_FOREGROUND);
 
             // (3) 선택: 모든 창 표시 이벤트. 감지율이 가장 높지만 콜백 빈도도 가장 높다.
-            if (Config.UseObjectShowHook)
-                AddHook(Native.EVENT_OBJECT_SHOW, Native.EVENT_OBJECT_SHOW);
+            SyncObjectShowHook();
 
             // (4) 창 드래그 이동 감지 (Alt+드래그 또는 허용 앱 자동 채우기)
             AddHook(Native.EVENT_SYSTEM_MOVESIZESTART, Native.EVENT_SYSTEM_MOVESIZEEND);
         }
 
-        private static void AddHook(uint min, uint max)
+        private static IntPtr AddHook(uint min, uint max)
         {
             IntPtr h = Native.SetWinEventHook(min, max, IntPtr.Zero, _winEventProc, 0, 0,
                 Native.WINEVENT_OUTOFCONTEXT | Native.WINEVENT_SKIPOWNPROCESS);
             if (h == IntPtr.Zero)
                 Log.Write(L.T("훅 설치 실패: 0x", "Hook install failed: 0x") + min.ToString("X4"));
             else Hooks.Add(h);
+            return h;
+        }
+
+        private static void SyncObjectShowHook()
+        {
+            if (Config.UseObjectShowHook && _objectShowHook == IntPtr.Zero)
+            {
+                _objectShowHook = AddHook(Native.EVENT_OBJECT_SHOW, Native.EVENT_OBJECT_SHOW);
+            }
+            else if (!Config.UseObjectShowHook && _objectShowHook != IntPtr.Zero)
+            {
+                Native.UnhookWinEvent(_objectShowHook);
+                Hooks.Remove(_objectShowHook);
+                _objectShowHook = IntPtr.Zero;
+            }
         }
 
         private static void RemoveDetectors()
@@ -267,6 +305,7 @@ namespace OnTopPasskey
             Native.DeregisterShellHookWindow(_hwnd);
             for (int i = 0; i < Hooks.Count; i++) Native.UnhookWinEvent(Hooks[i]);
             Hooks.Clear();
+            _objectShowHook = IntPtr.Zero;
         }
 
         private static void OnWinEvent(IntPtr hook, uint eventType, IntPtr hwnd,
@@ -296,7 +335,7 @@ namespace OnTopPasskey
         {
             if (_msgShellHook != 0 && msg == _msgShellHook)
             {
-                int ev = wParam.ToInt32() & 0x7FFF;   // RUDEAPPACTIVATED 의 0x8000 비트 제거
+                int ev = (int)(wParam.ToInt64() & 0x7FFF);   // RUDEAPPACTIVATED 의 0x8000 비트 제거
                 if (ev == Native.HSHELL_WINDOWCREATED || ev == Native.HSHELL_WINDOWACTIVATED)
                 {
                     if (lParam != IntPtr.Zero) Consider(lParam, "shellhook");
@@ -314,7 +353,7 @@ namespace OnTopPasskey
 
             if (msg == Native.WM_HOTKEY)
             {
-                int hk = wParam.ToInt32();
+                int hk = unchecked((int)wParam.ToInt64());
                 if (hk == MouseHelp.HotkeyId) RunHelp(false);
                 else if (hk == WindowFill.HotkeyId) RunFill();
                 return IntPtr.Zero;
@@ -322,7 +361,7 @@ namespace OnTopPasskey
 
             if (msg == Native.WM_TIMER)
             {
-                int id = wParam.ToInt32();
+                int id = unchecked((int)wParam.ToInt64());
                 if (id == TIMER_RETRY) RetryTick();
                 else if (id == TIMER_SAFETY) SafetyScan();
                 else if (id == WindowFill.PreviewTimerId) WindowFill.PreviewTick();
@@ -351,6 +390,9 @@ namespace OnTopPasskey
         {
             if (hwnd == _hwnd || WindowFill.IsPreviewWindow(hwnd)) return;
             if (!Native.IsWindowVisible(hwnd)) return;
+            uint winPid;
+            Native.GetWindowThreadProcessId(hwnd, out winPid);
+            if (winPid == Native.GetCurrentProcessId()) return;
 
             // 2차 필터: 클래스명 (커널 호출 1회, 매우 저렴)
             ClassBuf.Length = 0;
@@ -380,8 +422,14 @@ namespace OnTopPasskey
 
             if (!match || !_enabled) return;
 
-            // 이미 추적 중이면 다시 강제하지 않는다. 강제 시점은 재시도 루프가 관리한다.
+            // 이미 추적 중이거나 UIPI 거부로 포기한 창(열려 있는 동안)이면 다시 강제하지 않는다.
             if (Tracked.ContainsKey(hwnd)) return;
+            for (int i = GivenUp.Count - 1; i >= 0; i--)
+            {
+                IntPtr g = GivenUp[i];
+                if (!Native.IsWindow(g) || !Native.IsWindowVisible(g)) GivenUp.RemoveAt(i);
+            }
+            if (GivenUp.Contains(hwnd)) return;
 
             Tracked[hwnd] = new Track();
             // 원래 '항상 위'가 아니었다면 창이 사라질 때 되돌릴 수 있도록 기억해 둔다.
@@ -544,6 +592,8 @@ namespace OnTopPasskey
                                  ? L.T(", 포그라운드 확보 됨", ", foreground was acquired")
                                  : L.T(", 포그라운드 확보 안 됨", ", foreground was never acquired")));
                     RestoreTopmost(h);
+                    DiagDone.Remove(h);
+                    GivenUp.Remove(h);
                     (dead ?? (dead = new List<IntPtr>(1))).Add(h);
                     continue;
                 }
@@ -577,6 +627,12 @@ namespace OnTopPasskey
                             Log.Write(L.T("[권한] " + t.Denials + "회 거부되어 이 창에 대한 재시도를 중단합니다.",
                                           "[privilege] Denied " + t.Denials
                                           + " times; giving up on this window."));
+                            WasNotTopmost.Remove(h);
+                            if (!GivenUp.Contains(h))
+                            {
+                                if (GivenUp.Count >= 8) GivenUp.RemoveAt(0);
+                                GivenUp.Add(h);
+                            }
                             (dead ?? (dead = new List<IntPtr>(1))).Add(h);
                             continue;
                         }
@@ -602,6 +658,11 @@ namespace OnTopPasskey
         /// 인증 창은 보통 곧 사라지지만, 혹시라도 다른 창에 TOPMOST 가 눌러붙는 일이
         /// 없도록 반드시 원복한다.
         /// </summary>
+        internal static bool WasOriginallyNotTopmost(IntPtr hwnd)
+        {
+            return WasNotTopmost.Contains(hwnd);
+        }
+
         private static void RestoreTopmost(IntPtr hwnd)
         {
             if (!WasNotTopmost.Remove(hwnd)) return;
@@ -774,6 +835,7 @@ namespace OnTopPasskey
                 int cmd = Native.TrackPopupMenu(menu,
                     Native.TPM_RIGHTBUTTON | Native.TPM_RETURNCMD | Native.TPM_NONOTIFY,
                     pt.x, pt.y, 0, _hwnd, IntPtr.Zero);
+                Native.PostMessage(_hwnd, Native.WM_NULL, IntPtr.Zero, IntPtr.Zero);
 
                 if (cmd != 0) OnCommand(cmd, prevForeground);
             }
@@ -835,7 +897,9 @@ namespace OnTopPasskey
 
                 case CMD_RELOAD:
                     Config.Load();
+                    SyncObjectShowHook();
                     if (Config.SafetyPollMs > 0) StartSafetyTimer(); else StopSafetyTimer();
+                    UpdateTrayIcon();
                     Log.Write(L.T("설정 다시 읽음", "Settings reloaded"));
                     break;
 
@@ -1079,6 +1143,9 @@ namespace OnTopPasskey
             // 방금 준 TOPMOST 를 한 번 되돌린다. 활성화가 끝난 뒤 다시 한 번 적용한다.
             if (Config.KeepTopmost && !IsTopmost(hwnd))
                 Native.SetWindowPos(hwnd, Native.HWND_TOPMOST, 0, 0, 0, 0,
+                    Native.SWP_NOMOVE | Native.SWP_NOSIZE | Native.SWP_NOACTIVATE);
+            else if (!Config.KeepTopmost && App.WasOriginallyNotTopmost(hwnd) && IsTopmost(hwnd))
+                Native.SetWindowPos(hwnd, Native.HWND_NOTOPMOST, 0, 0, 0, 0,
                     Native.SWP_NOMOVE | Native.SWP_NOSIZE | Native.SWP_NOACTIVATE);
 
             r.IsTopmostNow = IsTopmost(hwnd);
@@ -1430,7 +1497,7 @@ namespace OnTopPasskey
                                         && tct.Count == 1 && tct[0] == "Windows Hello";
                 if (oldTitleDefaults) { teq.Clear(); tct.Clear(); }
 
-                if (sawRule)
+                if (sawRule && (cls.Count + prc.Count + teq.Count + tct.Count) > 0)
                 {
                     Swap(ClassContains, cls);
                     Swap(ProcessNames, prc);
@@ -1668,8 +1735,12 @@ namespace OnTopPasskey
                     Environment.SpecialFolder.ProgramFilesX86 })
                 {
                     string dir = Environment.GetFolderPath(f);
-                    if (dir.Length > 0 && exe.StartsWith(dir, StringComparison.OrdinalIgnoreCase))
-                        return true;
+                    if (dir.Length > 0)
+                    {
+                        string prefix = dir.TrimEnd('\\') + "\\";
+                        if (exe.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+                            return true;
+                    }
                 }
                 return false;
             }
@@ -1705,6 +1776,7 @@ namespace OnTopPasskey
 
     internal static class Native
     {
+        public const uint WM_NULL = 0x0000;
         public const int WM_APP = 0x8000;
         public const uint WM_DESTROY = 0x0002;
         public const uint WM_TIMER = 0x0113;
@@ -1910,6 +1982,9 @@ namespace OnTopPasskey
         [DllImport("user32.dll", CharSet = CharSet.Unicode)]
         public static extern IntPtr DispatchMessage(ref MSG lpMsg);
 
+        [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+        public static extern bool PostMessage(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam);
+
         [DllImport("user32.dll")]
         public static extern void PostQuitMessage(int nExitCode);
 
@@ -2002,6 +2077,13 @@ namespace OnTopPasskey
 
         [DllImport("user32.dll")]
         public static extern uint GetDpiForWindow(IntPtr hwnd);
+
+        public static uint GetDpiForWindowSafe(IntPtr hwnd)
+        {
+            try { return GetDpiForWindow(hwnd); }
+            catch (EntryPointNotFoundException) { return 0; }
+            catch (DllNotFoundException) { return 0; }
+        }
 
         [DllImport("user32.dll")]
         public static extern bool GetMonitorInfo(IntPtr hMonitor, ref MONITORINFO lpmi);
