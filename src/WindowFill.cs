@@ -356,6 +356,11 @@ namespace OnTopPasskey
         /// </summary>
         public static void Fill(IntPtr hwnd, bool allowToggle, bool atCursor = false)
         {
+            FillCore(hwnd, allowToggle, atCursor, false, default(Native.RECT));
+        }
+
+        private static void FillCore(IntPtr hwnd, bool allowToggle, bool atCursor, bool hasPreDragRect, Native.RECT preDragRect)
+        {
             try
             {
                 // 최대화된 창도 커서가 다른 디스플레이에 있으면 그쪽으로 옮겨 펼친다. 먼저 일반 크기로 되돌린다.
@@ -377,17 +382,32 @@ namespace OnTopPasskey
                     return;
                 }
 
-                // 커서가 창 밖에 있으면(다른 디스플레이 포함) 되돌리지 않고 커서가 가리키는 빈 공간을 고른다.
-                Native.POINT cur;
-                bool cursorOutside = atCursor && Native.GetCursorPos(out cur) &&
-                    (cur.x < currentVisible.left || cur.x >= currentVisible.right ||
-                     cur.y < currentVisible.top || cur.y >= currentVisible.bottom);
+                Native.RECT workArea;
+                if (!GetWorkArea(hwnd, atCursor, out workArea))
+                {
+                    if (restoredFromMax) Native.ShowWindow(hwnd, Native.SW_MAXIMIZE);
+                    return;
+                }
+                List<Native.RECT> obstacles = CollectObstacles(hwnd, workArea);
 
-                // 채운 자리 그대로인지. 그렇다면 처음 채우기 전의 원래 위치를 계속 유지한다.
+                // 커서가 창 밖에 있고(다른 디스플레이 포함) 실제로 빈 공간을 가리키고 있을 때만 커서 위치를 기준으로 삼는다.
+                // 드래그 놓기(allowToggle=false)에서는 미리보기(PreviewTick)와 동일하게 현재 창 영역(currentVisible)을 기준으로 계산한다.
+                Native.POINT cur;
+                bool cursorOutside = false;
+                if (allowToggle && atCursor && Native.GetCursorPos(out cur) &&
+                    (cur.x < currentVisible.left || cur.x >= currentVisible.right ||
+                     cur.y < currentVisible.top || cur.y >= currentVisible.bottom))
+                {
+                    cursorOutside = CursorOnOtherMonitor(hwnd) || IsPointInEmptyWorkArea(cur, workArea, obstacles);
+                }
+
+                // 채운 자리 그대로인지(드래그 채우기의 경우 드래그 시작 위치가 채운 자리였는지).
+                // 그렇다면 처음 채우기 전의 원래 위치(와 최대화 여부)를 계속 유지한다.
                 // 단, 방금 최대화 상태에서 복원한 창(restoredFromMax)은 채워진 상태가 아니다.
+                Native.RECT checkRect = hasPreDragRect ? preDragRect : currentWinRect;
                 Native.RECT lastFilled, orig = default(Native.RECT);
                 bool stillFilled = !restoredFromMax && _lastFilledBounds.TryGetValue(hwnd, out lastFilled)
-                    && Near(currentWinRect, lastFilled) && _originalBounds.TryGetValue(hwnd, out orig);
+                    && Near(checkRect, lastFilled) && _originalBounds.TryGetValue(hwnd, out orig);
 
                 // 되돌리기(토글): 채운 상태 그대로이고 커서가 창 안에 있으면 원래 크기로 복원
                 if (allowToggle && stillFilled && !cursorOutside)
@@ -420,9 +440,9 @@ namespace OnTopPasskey
                     score = new Native.RECT { left = cur.x, top = cur.y, right = cur.x + 1, bottom = cur.y + 1 };
                 }
 
-                // 장애물 수집 및 최적 빈 영역 계산 (미리보기는 시작 때 수집한 목록을 전달한다.)
+                // 수집한 장애물 목록으로 최적 빈 영역 계산
                 Native.RECT targetVisible;
-                if (!TryComputeFill(hwnd, null, score, atCursor, out targetVisible))
+                if (!Compute(workArea, obstacles, score, out targetVisible))
                 {
                     Log.Write(L.T("창 채우기: 적합한 빈 공간 없음 (", "Window fill: no suitable empty space found (") + App.ProcessNameOf(hwnd) + ")");
                     if (restoredFromMax) Native.ShowWindow(hwnd, Native.SW_MAXIMIZE);
@@ -453,7 +473,7 @@ namespace OnTopPasskey
                 // 채운 자리에서 다시 다른 곳으로 펼친 경우는 처음 원래 위치(와 최대화 여부)를 그대로 둔다.
                 if (!stillFilled)
                 {
-                    _originalBounds[hwnd] = currentWinRect;
+                    _originalBounds[hwnd] = hasPreDragRect ? preDragRect : currentWinRect;
                     if (restoredFromMax) _wasMaximized.Add(hwnd); else _wasMaximized.Remove(hwnd);
                 }
                 Native.RECT applied;
@@ -510,6 +530,19 @@ namespace OnTopPasskey
             double ew = width * (double)dpi / startDpi;
             double eh = height * (double)dpi / startDpi;
             return Math.Abs(cw - ew) <= ew * 0.1 && Math.Abs(ch - eh) <= eh * 0.1;
+        }
+
+        private static bool IsPointInEmptyWorkArea(Native.POINT pt, Native.RECT workArea, IList<Native.RECT> obstacles)
+        {
+            if (pt.x < workArea.left || pt.x >= workArea.right || pt.y < workArea.top || pt.y >= workArea.bottom)
+                return false;
+            for (int i = 0; i < obstacles.Count; i++)
+            {
+                Native.RECT o = obstacles[i];
+                if (pt.x >= o.left && pt.x < o.right && pt.y >= o.top && pt.y < o.bottom)
+                    return false;
+            }
+            return true;
         }
 
         private static bool CursorOnOtherMonitor(IntPtr hwnd)
@@ -629,7 +662,7 @@ namespace OnTopPasskey
                 // Alt 키를 누른 상태로 드래그를 마쳤거나, FillAutoProcesses 에 등록된 프로세스인 경우
                 if (ShouldAutoFill(IsAutoProcess(hwnd)))
                 {
-                    Fill(hwnd, false, true);
+                    FillCore(hwnd, false, true, true, startRect);
                 }
             }
             catch (Exception ex)

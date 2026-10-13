@@ -105,6 +105,7 @@ namespace OnTopPasskey
         {
             public int Ticks;          // 감지 후 경과한 틱 수 (RetryIntervalMs 단위)
             public int LastForceTick;  // 마지막으로 강제를 시도한 틱
+            public int LastTraceMs;    // 마지막으로 상태 추적 로그를 남긴 경과 시간(ms)
             public int Denials;        // UIPI 연속 거부 횟수
             public bool EverForeground;
         }
@@ -370,6 +371,7 @@ namespace OnTopPasskey
 
             if (msg == Native.WM_DESTROY)
             {
+                try { MouseHelp.Shutdown(); } catch { }
                 WindowFill.Shutdown();
                 Native.PostQuitMessage(0);
                 return IntPtr.Zero;
@@ -602,10 +604,14 @@ namespace OnTopPasskey
                 bool isFg = fg == h;
                 if (isFg) t.EverForeground = true;
 
+                int elapsedMs = t.Ticks * RetryIntervalMs;
                 if (Config.LogLevel >= Config.LogVerbose && Config.TraceMs > 0
-                    && (t.Ticks * RetryIntervalMs) % Config.TraceMs == 0)
-                    Log.Write(L.T("[추적] +", "[trace] +") + (t.Ticks * RetryIntervalMs) + "ms  "
+                    && (elapsedMs - t.LastTraceMs) >= Config.TraceMs)
+                {
+                    t.LastTraceMs = elapsedMs;
+                    Log.Write(L.T("[추적] +", "[trace] +") + elapsedMs + "ms  "
                               + Diag.InputState(h));
+                }
 
                 bool scheduled = Array.IndexOf(ScheduledForceTicks, t.Ticks) >= 0;
                 bool lost = !isFg && (t.Ticks - t.LastForceTick) >= RegrabIntervalTicks;
@@ -836,12 +842,14 @@ namespace OnTopPasskey
                     Native.TPM_RIGHTBUTTON | Native.TPM_RETURNCMD | Native.TPM_NONOTIFY,
                     pt.x, pt.y, 0, _hwnd, IntPtr.Zero);
                 Native.PostMessage(_hwnd, Native.WM_NULL, IntPtr.Zero, IntPtr.Zero);
+                Native.DestroyMenu(menu);
+                menu = IntPtr.Zero;
 
                 if (cmd != 0) OnCommand(cmd, prevForeground);
             }
             finally
             {
-                Native.DestroyMenu(menu);
+                if (menu != IntPtr.Zero) Native.DestroyMenu(menu);
                 Mem.Trim();
             }
         }
@@ -904,6 +912,7 @@ namespace OnTopPasskey
                     break;
 
                 case CMD_EXIT:
+                    try { MouseHelp.Shutdown(); } catch { }
                     Native.PostQuitMessage(0);
                     break;
             }
@@ -964,6 +973,7 @@ namespace OnTopPasskey
             {
                 Log.Write(L.T("관리자 권한으로 다시 실행합니다 - 현재 인스턴스 종료",
                               "Restarting elevated - shutting down this instance"));
+                try { MouseHelp.Shutdown(); } catch { }
                 Native.PostQuitMessage(0);
             }
             else
@@ -1290,7 +1300,7 @@ namespace OnTopPasskey
 
         public static void Run(IntPtr owner)
         {
-            WindowFill.RunSelfTest();
+            bool fillOk = WindowFill.RunSelfTest();
 
             Log.Write(L.T("[자가진단] 시작 - " + TestProcess + " 를 대상으로 강제 포그라운드를 시험합니다.",
                           "[selftest] Start - trying forced foreground against " + TestProcess));
@@ -1315,17 +1325,25 @@ namespace OnTopPasskey
                 return;
             }
 
+            bool wasTopmost = Force.IsTopmost(target);
             Log.Write(L.T("[자가진단] ", "[selftest] ") + Diag.Target(target));
             Force.Result r = Force.Foreground(target);
             Log.Write(L.T("[자가진단] ", "[selftest] ") + r);
 
-            // 시험 대상은 원래대로 되돌린다 (사용자 창을 계속 항상 위로 두지 않는다).
-            Native.SetWindowPos(target, Native.HWND_NOTOPMOST, 0, 0, 0, 0,
-                Native.SWP_NOMOVE | Native.SWP_NOSIZE | Native.SWP_NOACTIVATE);
+            // 시험 대상이 원래 항상 위가 아니었다면 원래대로 되돌린다 (사용자 창을 계속 항상 위로 두지 않는다).
+            if (!wasTopmost)
+            {
+                Native.SetWindowPos(target, Native.HWND_NOTOPMOST, 0, 0, 0, 0,
+                    Native.SWP_NOMOVE | Native.SWP_NOSIZE | Native.SWP_NOACTIVATE);
+            }
+
+            string fillStatus = fillOk
+                ? L.T("창 채우기 계산 검증: 통과", "Window fill self-test: OK")
+                : L.T("창 채우기 계산 검증: 실패", "Window fill self-test: FAILED");
 
             Native.MessageBox(owner,
-                L.T("자가 진단 결과\r\n\r\n" + r + "\r\n\r\n자세한 내용은 로그를 확인하세요.",
-                    "Self test result\r\n\r\n" + r + "\r\n\r\nSee the log for details."),
+                L.T("자가 진단 결과\r\n\r\n" + r + "\r\n" + fillStatus + "\r\n\r\n자세한 내용은 로그를 확인하세요.",
+                    "Self test result\r\n\r\n" + r + "\r\n" + fillStatus + "\r\n\r\nSee the log for details."),
                 "OnTopPasskey", Native.MB_ICONINFORMATION);
         }
 

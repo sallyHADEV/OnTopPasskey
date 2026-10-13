@@ -56,6 +56,17 @@ namespace OnTopPasskey
             Open(true);
         }
 
+        /// <summary>본체 종료 시 열려 있는 패널(특히 모달 편집 창)을 닫는다.</summary>
+        public static void Shutdown()
+        {
+            var p = _open;
+            if (p != null)
+            {
+                _open = null;
+                try { p.Close(); } catch { }
+            }
+        }
+
         private static void Open(bool edit)
         {
             var p = new Panel(edit, LoadLabels());

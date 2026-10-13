@@ -575,7 +575,8 @@ namespace OnTopPasskeySetup
 
         private static string Esc(string s)
         {
-            return s.Replace("&", "&amp;").Replace("<", "&lt;").Replace(">", "&gt;");
+            return s.Replace("&", "&amp;").Replace("<", "&lt;").Replace(">", "&gt;")
+                    .Replace("\"", "&quot;").Replace("'", "&apos;");
         }
 
         private static void CreateShortcuts(Action<string> log)
