@@ -227,14 +227,21 @@ namespace OnTopPasskey
                 // 최대화된 창은 배경으로 취급하여 장애물에서 제외
                 if (Native.IsZoomed(hwnd)) return true;
 
+                // 자기 프로세스의 창(마우스 도움말 등) 제외
+                uint pid;
+                Native.GetWindowThreadProcessId(hwnd, out pid);
+                if (pid == Native.GetCurrentProcessId()) return true;
+
                 // 툴 윈도우 및 클릭 통과 오버레이 제외
                 long exStyle = Native.GetWindowLongSafe(hwnd, Native.GWL_EXSTYLE);
                 if ((exStyle & Native.WS_EX_TOOLWINDOW) != 0) return true;
                 if ((exStyle & Native.WS_EX_TRANSPARENT) != 0) return true;
 
                 // 대상 창이 (간접으로라도) 소유한 팝업 제외. 소유 체인 중간에 대상이 있을 수 있다.
-                for (IntPtr o = Native.GetWindow(hwnd, Native.GW_OWNER); o != IntPtr.Zero;
-                     o = Native.GetWindow(o, Native.GW_OWNER))
+                int hops = 0;
+                for (IntPtr o = Native.GetWindow(hwnd, Native.GW_OWNER);
+                     o != IntPtr.Zero && hops < 32;
+                     o = Native.GetWindow(o, Native.GW_OWNER), hops++)
                     if (o == targetHwnd) return true;
 
                 // 숨겨진(cloaked) 창 제외 (다른 가상 데스크톱 창, UWP 백그라운드 등)
@@ -320,9 +327,14 @@ namespace OnTopPasskey
             if (!Native.IsWindowVisible(hwnd)) return false;
             if (Native.IsIconic(hwnd) || Native.IsZoomed(hwnd)) return false;
 
+            uint pid;
+            Native.GetWindowThreadProcessId(hwnd, out pid);
+            if (pid == Native.GetCurrentProcessId()) return false;
+
             long exStyle = Native.GetWindowLongSafe(hwnd, Native.GWL_EXSTYLE);
             if ((exStyle & Native.WS_EX_TOOLWINDOW) != 0) return false;
             if ((exStyle & Native.WS_EX_TRANSPARENT) != 0) return false;
+            if ((exStyle & Native.WS_EX_NOACTIVATE) != 0) return false;
 
             int cloaked = 0;
             if (Native.DwmGetWindowAttribute(hwnd, Native.DWMWA_CLOAKED, out cloaked, 4) == 0 && cloaked != 0)
@@ -351,11 +363,19 @@ namespace OnTopPasskey
                                        && Native.ShowWindow(hwnd, Native.SW_RESTORE) && !Native.IsZoomed(hwnd);
 
                 // 최대화·최소화 등 부적합한 창이면 다른 창으로 대체하지 않고 그냥 끝낸다.
-                if (!IsValidTarget(hwnd)) return;
+                if (!IsValidTarget(hwnd))
+                {
+                    if (restoredFromMax) Native.ShowWindow(hwnd, Native.SW_MAXIMIZE);
+                    return;
+                }
 
                 Native.RECT currentVisible;
                 Native.RECT currentWinRect;
-                if (!GetVisibleBounds(hwnd, out currentVisible, out currentWinRect)) return;
+                if (!GetVisibleBounds(hwnd, out currentVisible, out currentWinRect))
+                {
+                    if (restoredFromMax) Native.ShowWindow(hwnd, Native.SW_MAXIMIZE);
+                    return;
+                }
 
                 // 커서가 창 밖에 있으면(다른 디스플레이 포함) 되돌리지 않고 커서가 가리키는 빈 공간을 고른다.
                 Native.POINT cur;
@@ -364,8 +384,9 @@ namespace OnTopPasskey
                      cur.y < currentVisible.top || cur.y >= currentVisible.bottom);
 
                 // 채운 자리 그대로인지. 그렇다면 처음 채우기 전의 원래 위치를 계속 유지한다.
+                // 단, 방금 최대화 상태에서 복원한 창(restoredFromMax)은 채워진 상태가 아니다.
                 Native.RECT lastFilled, orig = default(Native.RECT);
-                bool stillFilled = _lastFilledBounds.TryGetValue(hwnd, out lastFilled)
+                bool stillFilled = !restoredFromMax && _lastFilledBounds.TryGetValue(hwnd, out lastFilled)
                     && Near(currentWinRect, lastFilled) && _originalBounds.TryGetValue(hwnd, out orig);
 
                 // 되돌리기(토글): 채운 상태 그대로이고 커서가 창 안에 있으면 원래 크기로 복원
@@ -408,14 +429,15 @@ namespace OnTopPasskey
                     return;
                 }
 
-                // 이미 해당 위치와 크기에 정확히 맞추어져 있다면 추가 조작 생략
-                if (SameRect(currentVisible, targetVisible))
+                // 이미 해당 위치와 크기에 정확히 맞추어져 있다면 추가 조작 생략 (최대화에서 복원한 경우는 기록을 위해 진행)
+                if (!restoredFromMax && SameRect(currentVisible, targetVisible))
                 {
                     return;
                 }
 
                 if (!Place(hwnd, currentVisible, currentWinRect, targetVisible))
                 {
+                    if (restoredFromMax) Native.ShowWindow(hwnd, Native.SW_MAXIMIZE);
                     Log.Write(L.T("창 채우기 실패 (err ", "Window fill failed (err ")
                               + Marshal.GetLastWin32Error() + "): " + App.ProcessNameOf(hwnd));
                     return;
@@ -483,7 +505,7 @@ namespace OnTopPasskey
             if (width <= 0 || height <= 0) return false;
             int cw = current.right - current.left;
             int ch = current.bottom - current.top;
-            uint dpi = Native.GetDpiForWindow(hwnd);
+            uint dpi = Native.GetDpiForWindowSafe(hwnd);
             if (startDpi == 0 || dpi == 0 || dpi == startDpi) return cw == width && ch == height;
             double ew = width * (double)dpi / startDpi;
             double eh = height * (double)dpi / startDpi;
@@ -565,7 +587,7 @@ namespace OnTopPasskey
                 _dragObstacles = CollectObstacles(hwnd, workArea);
                 _dragHwnd = hwnd;
                 _dragStartRect = startRect;
-                _dragStartDpi = Native.GetDpiForWindow(hwnd);
+                _dragStartDpi = Native.GetDpiForWindowSafe(hwnd);
                 _dragAutoProcess = autoProcess;
                 _previewTimerOwner = App.Hwnd;
                 if (_previewTimerOwner == IntPtr.Zero ||
@@ -629,7 +651,10 @@ namespace OnTopPasskey
                     return;
                 }
                 Native.RECT visible, winRect, target;
-                if (!GetVisibleBounds(_dragHwnd, out visible, out winRect) ||
+                int movedDist = 0;
+                if (GetVisibleBounds(_dragHwnd, out visible, out winRect))
+                    movedDist = Math.Abs(winRect.left - _dragStartRect.left) + Math.Abs(winRect.top - _dragStartRect.top);
+                if (movedDist < 4 ||
                     !SameDragSize(_dragHwnd, winRect, _dragStartRect, _dragStartDpi) || !ShouldAutoFill(_dragAutoProcess) ||
                     !TryComputeFill(_dragHwnd, _dragObstacles, visible, true, out target))
                 {
