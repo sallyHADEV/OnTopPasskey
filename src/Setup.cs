@@ -683,21 +683,24 @@ namespace OnTopPasskeySetup
 
                 using (Process p = Process.Start(psi))
                 {
-                    var errBuf = new StringBuilder();
-                    p.ErrorDataReceived += delegate(object s, DataReceivedEventArgs e)
+                    // 두 스트림 모두 비동기로 읽어야 프로세스가 멈춰도 타임아웃이 걸린다.
+                    var buf = new StringBuilder();
+                    DataReceivedEventHandler onData = delegate(object s, DataReceivedEventArgs e)
                     {
-                        if (e.Data != null) errBuf.AppendLine(e.Data);
+                        if (e.Data != null) lock (buf) buf.AppendLine(e.Data);
                     };
+                    p.OutputDataReceived += onData;
+                    p.ErrorDataReceived += onData;
+                    p.BeginOutputReadLine();
                     p.BeginErrorReadLine();
-                    string stdOut = p.StandardOutput.ReadToEnd();
                     if (!p.WaitForExit(30000))
                     {
                         try { p.Kill(); } catch { }
-                        output = stdOut + errBuf.ToString();
+                        lock (buf) output = buf.ToString();
                         return -1;
                     }
-                    p.WaitForExit();
-                    output = stdOut + errBuf.ToString();
+                    p.WaitForExit();   // 비동기 출력이 모두 도착할 때까지 대기
+                    lock (buf) output = buf.ToString();
                     return p.ExitCode;
                 }
             }
