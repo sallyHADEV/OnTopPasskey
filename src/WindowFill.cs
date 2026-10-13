@@ -26,6 +26,7 @@ namespace OnTopPasskey
         // 창별 되돌리기(토글) 기록
         private static readonly Dictionary<IntPtr, Native.RECT> _originalBounds = new Dictionary<IntPtr, Native.RECT>(8);
         private static readonly Dictionary<IntPtr, Native.RECT> _lastFilledBounds = new Dictionary<IntPtr, Native.RECT>(8);
+        private static readonly HashSet<IntPtr> _wasMaximized = new HashSet<IntPtr>();
 
         // 창 드래그 이동 감지용
         private static IntPtr _dragHwnd = IntPtr.Zero;
@@ -345,6 +346,10 @@ namespace OnTopPasskey
         {
             try
             {
+                // 최대화된 창도 커서가 다른 디스플레이에 있으면 그쪽으로 옮겨 펼친다. 먼저 일반 크기로 되돌린다.
+                bool restoredFromMax = atCursor && Native.IsZoomed(hwnd) && CursorOnOtherMonitor(hwnd)
+                                       && Native.ShowWindow(hwnd, Native.SW_RESTORE) && !Native.IsZoomed(hwnd);
+
                 // 최대화·최소화 등 부적합한 창이면 다른 창으로 대체하지 않고 그냥 끝낸다.
                 if (!IsValidTarget(hwnd)) return;
 
@@ -352,17 +357,33 @@ namespace OnTopPasskey
                 Native.RECT currentWinRect;
                 if (!GetVisibleBounds(hwnd, out currentVisible, out currentWinRect)) return;
 
-                // 되돌리기(토글): 채운 상태 그대로면 원래 크기로 복원
-                Native.RECT lastFilled, orig;
-                if (allowToggle && _lastFilledBounds.TryGetValue(hwnd, out lastFilled)
-                    && Near(currentWinRect, lastFilled) && _originalBounds.TryGetValue(hwnd, out orig))
+                // 커서가 창 밖에 있으면(다른 디스플레이 포함) 되돌리지 않고 커서가 가리키는 빈 공간을 고른다.
+                Native.POINT cur;
+                bool cursorOutside = atCursor && Native.GetCursorPos(out cur) &&
+                    (cur.x < currentVisible.left || cur.x >= currentVisible.right ||
+                     cur.y < currentVisible.top || cur.y >= currentVisible.bottom);
+
+                // 채운 자리 그대로인지. 그렇다면 처음 채우기 전의 원래 위치를 계속 유지한다.
+                Native.RECT lastFilled, orig = default(Native.RECT);
+                bool stillFilled = _lastFilledBounds.TryGetValue(hwnd, out lastFilled)
+                    && Near(currentWinRect, lastFilled) && _originalBounds.TryGetValue(hwnd, out orig);
+
+                // 되돌리기(토글): 채운 상태 그대로이고 커서가 창 안에 있으면 원래 크기로 복원
+                if (allowToggle && stillFilled && !cursorOutside)
                 {
                     if (Native.SetWindowPos(hwnd, IntPtr.Zero,
                             orig.left, orig.top, orig.right - orig.left, orig.bottom - orig.top,
                             Native.SWP_NOZORDER | Native.SWP_NOACTIVATE))
                     {
+                        // 배율이 다른 디스플레이로 돌아가며 크기가 바뀌었으면 한 번 더 맞춘다.
+                        Native.RECT back;
+                        if (Native.GetWindowRect(hwnd, out back) && !SameRect(back, orig))
+                            Native.SetWindowPos(hwnd, IntPtr.Zero,
+                                orig.left, orig.top, orig.right - orig.left, orig.bottom - orig.top,
+                                Native.SWP_NOZORDER | Native.SWP_NOACTIVATE);
                         _originalBounds.Remove(hwnd);
                         _lastFilledBounds.Remove(hwnd);
+                        if (_wasMaximized.Remove(hwnd)) Native.ShowWindow(hwnd, Native.SW_MAXIMIZE);
                         Log.Write(L.T("창 크기 원래대로 복원: ", "Restored window to original size: ") + App.ProcessNameOf(hwnd));
                     }
                     else
@@ -371,19 +392,19 @@ namespace OnTopPasskey
                     return;
                 }
 
-                // 커서가 창 밖에 있으면(다른 디스플레이 포함) 커서가 가리키는 빈 공간을 고른다.
                 Native.RECT score = currentVisible;
-                Native.POINT cur;
-                if (atCursor && Native.GetCursorPos(out cur) &&
-                    (cur.x < currentVisible.left || cur.x >= currentVisible.right ||
-                     cur.y < currentVisible.top || cur.y >= currentVisible.bottom))
+                if (cursorOutside)
+                {
+                    Native.GetCursorPos(out cur);
                     score = new Native.RECT { left = cur.x, top = cur.y, right = cur.x + 1, bottom = cur.y + 1 };
+                }
 
                 // 장애물 수집 및 최적 빈 영역 계산 (미리보기는 시작 때 수집한 목록을 전달한다.)
                 Native.RECT targetVisible;
                 if (!TryComputeFill(hwnd, null, score, atCursor, out targetVisible))
                 {
                     Log.Write(L.T("창 채우기: 적합한 빈 공간 없음 (", "Window fill: no suitable empty space found (") + App.ProcessNameOf(hwnd) + ")");
+                    if (restoredFromMax) Native.ShowWindow(hwnd, Native.SW_MAXIMIZE);
                     return;
                 }
 
@@ -393,29 +414,26 @@ namespace OnTopPasskey
                     return;
                 }
 
-                // Windows 10/11 보이지 않는 창 테두리(약 7px) 보정
-                int diffLeft = Math.Max(0, currentVisible.left - currentWinRect.left);
-                int diffTop = Math.Max(0, currentVisible.top - currentWinRect.top);
-                int diffRight = Math.Max(0, currentWinRect.right - currentVisible.right);
-                int diffBottom = Math.Max(0, currentWinRect.bottom - currentVisible.bottom);
-
-                int newWinLeft = targetVisible.left - diffLeft;
-                int newWinTop = targetVisible.top - diffTop;
-                int newWinWidth = (targetVisible.right - targetVisible.left) + diffLeft + diffRight;
-                int newWinHeight = (targetVisible.bottom - targetVisible.top) + diffTop + diffBottom;
-
-                if (!Native.SetWindowPos(hwnd, IntPtr.Zero,
-                        newWinLeft, newWinTop, newWinWidth, newWinHeight,
-                        Native.SWP_NOZORDER | Native.SWP_NOACTIVATE))
+                if (!Place(hwnd, currentVisible, currentWinRect, targetVisible))
                 {
                     Log.Write(L.T("창 채우기 실패 (err ", "Window fill failed (err ")
                               + Marshal.GetLastWin32Error() + "): " + App.ProcessNameOf(hwnd));
                     return;
                 }
+                // 배율이 다른 디스플레이로 넘어가면 창이 WM_DPICHANGED 로 스스로 크기를 바꾼다.
+                // 새 디스플레이에서 테두리 두께도 달라지므로 다시 재서 한 번 더 맞춘다.
+                Native.RECT afterVisible, afterWin;
+                if (GetVisibleBounds(hwnd, out afterVisible, out afterWin) && !SameRect(afterVisible, targetVisible))
+                    Place(hwnd, afterVisible, afterWin, targetVisible);
 
                 // 자동 채우기도 원래 위치를 남겨야 단축키로 되돌릴 수 있다.
                 // 창이 최소 크기 등으로 요청을 보정할 수 있으므로 실제 적용된 좌표를 기록한다.
-                _originalBounds[hwnd] = currentWinRect;
+                // 채운 자리에서 다시 다른 곳으로 펼친 경우는 처음 원래 위치(와 최대화 여부)를 그대로 둔다.
+                if (!stillFilled)
+                {
+                    _originalBounds[hwnd] = currentWinRect;
+                    if (restoredFromMax) _wasMaximized.Add(hwnd); else _wasMaximized.Remove(hwnd);
+                }
                 Native.RECT applied;
                 if (Native.GetWindowRect(hwnd, out applied)) _lastFilledBounds[hwnd] = applied;
 
@@ -429,6 +447,20 @@ namespace OnTopPasskey
             {
                 Log.WriteAlways(L.T("창 채우기 오류: ", "Window fill error: ") + ex.Message);
             }
+        }
+
+        // Windows 10/11 보이지 않는 창 테두리(약 7px)를 보정해 보이는 경계가 target 에 맞도록 놓는다.
+        private static bool Place(IntPtr hwnd, Native.RECT visible, Native.RECT win, Native.RECT target)
+        {
+            int diffLeft = Math.Max(0, visible.left - win.left);
+            int diffTop = Math.Max(0, visible.top - win.top);
+            int diffRight = Math.Max(0, win.right - visible.right);
+            int diffBottom = Math.Max(0, win.bottom - visible.bottom);
+            return Native.SetWindowPos(hwnd, IntPtr.Zero,
+                target.left - diffLeft, target.top - diffTop,
+                (target.right - target.left) + diffLeft + diffRight,
+                (target.bottom - target.top) + diffTop + diffBottom,
+                Native.SWP_NOZORDER | Native.SWP_NOACTIVATE);
         }
 
         private static bool Near(Native.RECT a, Native.RECT b)
@@ -456,6 +488,14 @@ namespace OnTopPasskey
             double ew = width * (double)dpi / startDpi;
             double eh = height * (double)dpi / startDpi;
             return Math.Abs(cw - ew) <= ew * 0.1 && Math.Abs(ch - eh) <= eh * 0.1;
+        }
+
+        private static bool CursorOnOtherMonitor(IntPtr hwnd)
+        {
+            Native.POINT pt;
+            return Native.GetCursorPos(out pt) &&
+                   Native.MonitorFromPoint(pt, Native.MONITOR_DEFAULTTONEAREST) !=
+                   Native.MonitorFromWindow(hwnd, Native.MONITOR_DEFAULTTONEAREST);
         }
 
         // atCursor: 드래그·단축키는 창이 어느 디스플레이에 있든 커서가 있는 디스플레이를 채운다.
@@ -503,6 +543,7 @@ namespace OnTopPasskey
                 {
                     _originalBounds.Remove(dead[i]);
                     _lastFilledBounds.Remove(dead[i]);
+                    _wasMaximized.Remove(dead[i]);
                 }
             }
         }
