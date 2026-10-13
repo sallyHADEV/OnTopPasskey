@@ -186,6 +186,8 @@ namespace OnTopPasskeySetup
                 if (r != DialogResult.Yes) return 0;
             }
 
+            if (fromTemp) Installer.ScheduleSelfDeleteOnReboot();
+
             var sb = new StringBuilder();
             try
             {
@@ -377,12 +379,25 @@ namespace OnTopPasskeySetup
             }
             catch { }
 
-            // 설치 폴더 삭제. 잠긴 파일이 있으면 재부팅 시 삭제되도록 예약한다.
+            // 설치 폴더 삭제. 방금 종료된 프로세스가 파일 핸들을 놓을 때까지 잠시 재시도한 뒤,
+            // 그래도 잠긴 파일이 있으면 재부팅 시 삭제되도록 예약한다.
             try
             {
                 if (Directory.Exists(InstallDir))
                 {
-                    Directory.Delete(InstallDir, true);
+                    for (int attempt = 0; ; attempt++)
+                    {
+                        try
+                        {
+                            Directory.Delete(InstallDir, true);
+                            break;
+                        }
+                        catch
+                        {
+                            if (attempt >= 5) throw;
+                            System.Threading.Thread.Sleep(150);
+                        }
+                    }
                     log(L.T("설치 폴더 삭제: ", "Removed install folder: ") + InstallDir);
                 }
             }
@@ -396,15 +411,39 @@ namespace OnTopPasskeySetup
 
         // ------------------------------------------------------- 개별 동작들
 
+        [System.Runtime.InteropServices.DllImport("user32.dll", CharSet =
+            System.Runtime.InteropServices.CharSet.Unicode)]
+        private static extern IntPtr FindWindowEx(IntPtr parent, IntPtr after, string cls, string title);
+
+        [System.Runtime.InteropServices.DllImport("user32.dll")]
+        private static extern bool PostMessage(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam);
+
+        private const uint WM_CLOSE = 0x0010;
+
         public static void StopApp()
         {
             try
             {
+                // 트레이 아이콘이 유령 아이콘으로 남지 않도록 먼저 정상 종료(WM_CLOSE)를 요청한다.
+                for (IntPtr h = FindWindowEx(IntPtr.Zero, IntPtr.Zero, "OnTopPasskey.HiddenWnd", null);
+                     h != IntPtr.Zero;
+                     h = FindWindowEx(IntPtr.Zero, h, "OnTopPasskey.HiddenWnd", null))
+                {
+                    PostMessage(h, WM_CLOSE, IntPtr.Zero, IntPtr.Zero);
+                }
+
                 Process[] list = Process.GetProcessesByName(
                     Path.GetFileNameWithoutExtension(Program.ExeName));
                 foreach (Process p in list)
                 {
-                    try { p.Kill(); p.WaitForExit(3000); }
+                    try
+                    {
+                        if (!p.WaitForExit(800))
+                        {
+                            p.Kill();
+                            p.WaitForExit(3000);
+                        }
+                    }
                     catch { }
                     finally { p.Dispose(); }
                 }
@@ -569,9 +608,10 @@ namespace OnTopPasskeySetup
             if (shellType == null) return;
 
             object shell = Activator.CreateInstance(shellType);
+            object lnk = null;
             try
             {
-                object lnk = shellType.InvokeMember("CreateShortcut", BindingFlags.InvokeMethod,
+                lnk = shellType.InvokeMember("CreateShortcut", BindingFlags.InvokeMethod,
                     null, shell, new object[] { path });
                 Type lt = lnk.GetType();
 
@@ -586,6 +626,11 @@ namespace OnTopPasskeySetup
             }
             finally
             {
+                if (lnk != null)
+                {
+                    try { System.Runtime.InteropServices.Marshal.ReleaseComObject(lnk); }
+                    catch { }
+                }
                 try { System.Runtime.InteropServices.Marshal.ReleaseComObject(shell); }
                 catch { }
             }
@@ -638,8 +683,21 @@ namespace OnTopPasskeySetup
 
                 using (Process p = Process.Start(psi))
                 {
-                    output = p.StandardOutput.ReadToEnd() + p.StandardError.ReadToEnd();
-                    p.WaitForExit(30000);
+                    var errBuf = new StringBuilder();
+                    p.ErrorDataReceived += delegate(object s, DataReceivedEventArgs e)
+                    {
+                        if (e.Data != null) errBuf.AppendLine(e.Data);
+                    };
+                    p.BeginErrorReadLine();
+                    string stdOut = p.StandardOutput.ReadToEnd();
+                    if (!p.WaitForExit(30000))
+                    {
+                        try { p.Kill(); } catch { }
+                        output = stdOut + errBuf.ToString();
+                        return -1;
+                    }
+                    p.WaitForExit();
+                    output = stdOut + errBuf.ToString();
                     return p.ExitCode;
                 }
             }
@@ -655,6 +713,12 @@ namespace OnTopPasskeySetup
         private static extern bool MoveFileEx(string existing, string newName, int flags);
 
         private const int MOVEFILE_DELAY_UNTIL_REBOOT = 0x4;
+
+        public static void ScheduleSelfDeleteOnReboot()
+        {
+            try { MoveFileEx(Application.ExecutablePath, null, MOVEFILE_DELAY_UNTIL_REBOOT); }
+            catch { }
+        }
 
         private static void ScheduleDeleteOnReboot(string dir)
         {
@@ -683,6 +747,7 @@ namespace OnTopPasskeySetup
         private readonly Button _cancel = new Button();
         private readonly Panel _header = new Panel();
 
+        private bool _installing;
         private bool _installed;
         public bool Failed { get; private set; }
 
@@ -801,10 +866,21 @@ namespace OnTopPasskeySetup
             return sb.ToString();
         }
 
+        protected override void OnFormClosing(FormClosingEventArgs e)
+        {
+            if (_installing && e.CloseReason == CloseReason.UserClosing)
+            {
+                e.Cancel = true;
+                return;
+            }
+            base.OnFormClosing(e);
+        }
+
         private void OnPrimary(object sender, EventArgs e)
         {
             if (_installed) { Close(); return; }
 
+            _installing = true;
             _primary.Enabled = false;
             _cancel.Enabled = false;
             _details.Visible = false;
@@ -857,6 +933,7 @@ namespace OnTopPasskeySetup
         /// <summary>설치가 끝난 뒤의 버튼 상태. 취소는 더 이상 의미가 없으므로 감춘다.</summary>
         private void Finish()
         {
+            _installing = false;
             _primary.Text = L.T("닫기", "Close");
             _primary.Enabled = true;
             _cancel.Visible = false;
